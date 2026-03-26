@@ -39,7 +39,7 @@ def init_qdrant_client():
     )
 
     # Отключаем TLS verify для корпоративного сертификата
-    client._client.http.client.verify = False
+    # client._client.http.client.verify = False
 
     return client
 
