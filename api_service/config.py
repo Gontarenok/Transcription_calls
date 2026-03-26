@@ -16,8 +16,10 @@ class Settings:
     api_key_admin: str = os.getenv("API_KEY_ADMIN", "")
 
     qdrant_url: str = os.getenv("QDRANT_URL", "")
-    qdrant_api_key: str = os.getenv("QDRANT_API_KEY", "")
-    qdrant_collection_topics: str = os.getenv("QDRANT_COLLECTION_TOPICS", "topics_spravochnik")
+    # Backward-compat: env может называться QDRANT_API или QDRANT_API_KEY
+    qdrant_api_key: str = os.getenv("QDRANT_API_KEY", "") or os.getenv("QDRANT_API", "")
+    # Backward-compat: коллекция может называться QDRANT_COLLECTION_NAME
+    qdrant_collection_topics: str = os.getenv("QDRANT_COLLECTION_TOPICS", "") or os.getenv("QDRANT_COLLECTION_NAME", "topics_spravochnik")
 
 
 settings = Settings()

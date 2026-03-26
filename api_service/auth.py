@@ -3,7 +3,7 @@ from fastapi import Header, HTTPException, Query, status
 from api_service.config import settings
 
 ROLE_911 = "911"
-ROLE_KC = "KЦ"
+ROLE_KC = "КЦ"
 ROLE_ADMIN = "ADMIN"
 
 
@@ -36,5 +36,5 @@ def allowed_call_types_for_role(role: str) -> set[str]:
     if role == ROLE_911:
         return {"911"}
     if role == ROLE_KC:
-        return {"KЦ"}
-    return {"911", "KЦ"}
+        return {"КЦ"}
+    return {"911", "КЦ"}

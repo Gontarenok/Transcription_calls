@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 from io import BytesIO
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Query, Request
@@ -28,28 +28,28 @@ def resolve_period(period: str | None) -> tuple[datetime | None, datetime | None
         return None, None
     today = date.today()
     if period == "today":
-        return datetime.combine(today, time.min), datetime.combine(today, time.max)
+        return datetime.combine(today, time.min).replace(tzinfo=timezone.utc), datetime.combine(today, time.max).replace(tzinfo=timezone.utc)
     if period == "yesterday":
         d = today - timedelta(days=1)
-        return datetime.combine(d, time.min), datetime.combine(d, time.max)
+        return datetime.combine(d, time.min).replace(tzinfo=timezone.utc), datetime.combine(d, time.max).replace(tzinfo=timezone.utc)
     if period == "week_current":
         start = today - timedelta(days=today.weekday())
         end = start + timedelta(days=6)
-        return datetime.combine(start, time.min), datetime.combine(end, time.max)
+        return datetime.combine(start, time.min).replace(tzinfo=timezone.utc), datetime.combine(end, time.max).replace(tzinfo=timezone.utc)
     if period == "week_prev":
         end = today - timedelta(days=today.weekday() + 1)
         start = end - timedelta(days=6)
-        return datetime.combine(start, time.min), datetime.combine(end, time.max)
+        return datetime.combine(start, time.min).replace(tzinfo=timezone.utc), datetime.combine(end, time.max).replace(tzinfo=timezone.utc)
     if period == "month_current":
         start = today.replace(day=1)
         next_month = start.replace(year=start.year + 1, month=1) if start.month == 12 else start.replace(month=start.month + 1)
         end = next_month - timedelta(days=1)
-        return datetime.combine(start, time.min), datetime.combine(end, time.max)
+        return datetime.combine(start, time.min).replace(tzinfo=timezone.utc), datetime.combine(end, time.max).replace(tzinfo=timezone.utc)
     if period == "month_prev":
         cur_start = today.replace(day=1)
         prev_end = cur_start - timedelta(days=1)
         prev_start = prev_end.replace(day=1)
-        return datetime.combine(prev_start, time.min), datetime.combine(prev_end, time.max)
+        return datetime.combine(prev_start, time.min).replace(tzinfo=timezone.utc), datetime.combine(prev_end, time.max).replace(tzinfo=timezone.utc)
     return None, None
 
 
@@ -57,6 +57,8 @@ def normalize_call_type_filter(value: str | None) -> str | None:
     if not value:
         return None
     v = value.upper()
+    # Canonical code in system is "КЦ" (Cyrillic).
+    # Backward-compat: accept "KЦ"/"KC" from older scripts/UI.
     if v in {"KЦ", "КЦ", "KC"}:
         return "КЦ"
     return v
@@ -66,7 +68,7 @@ def parse_date_only(d: str | None, end_of_day: bool = False) -> datetime | None:
     if not d:
         return None
     day = datetime.strptime(d, "%Y-%m-%d").date()
-    return datetime.combine(day, time.max if end_of_day else time.min)
+    return datetime.combine(day, time.max if end_of_day else time.min).replace(tzinfo=timezone.utc)
 
 
 def choose_date_range(period: str | None, date_from: str | None, date_to: str | None) -> tuple[datetime | None, datetime | None, str | None]:

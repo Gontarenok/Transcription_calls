@@ -55,10 +55,6 @@ def init_qdrant() -> QdrantClient:
     if not settings.qdrant_url:
         raise RuntimeError("QDRANT_URL is not configured")
     client = QdrantClient(url=settings.qdrant_url, api_key=settings.qdrant_api_key or None, timeout=60, https=True)
-    try:
-        client._client.http.client.verify = False
-    except Exception:
-        pass
     return client
 
 

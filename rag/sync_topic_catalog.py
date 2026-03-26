@@ -10,28 +10,24 @@ from db.crud import (
     upsert_topic_catalog_entry,
 )
 from rag.catalog_service import build_doc_text, entry_source_hash, sync_catalog_entries
-from rag.convert_spravochnik import convert as convert_txt_to_json
 
 
-def load_records_from_reference(reference_path: Path, json_path: Path) -> list[dict]:
-    convert_txt_to_json(reference_path, json_path)
+def load_records_from_spravochnik_json(spravochnik_path: Path) -> list[dict]:
     import json
 
-    return json.loads(json_path.read_text(encoding="utf-8"))
+    return json.loads(spravochnik_path.read_text(encoding="utf-8"))
 
 
 def main():
     parser = argparse.ArgumentParser(description="Импортирует справочник тем/подтем в БД и синхронизирует его с Qdrant")
-    parser.add_argument("--reference", default="reference_topics.txt")
-    parser.add_argument("--json-cache", default="spravochnik.generated.json")
+    parser.add_argument("--spravochnik", default="spravochnik.json", help="JSON справочник (с описаниями), источник истины на этапе тестирования")
     args = parser.parse_args()
 
-    reference_path = Path(args.reference)
-    json_path = Path(args.json_cache)
-    if not reference_path.exists():
-        raise SystemExit(f"Не найден справочник: {reference_path}")
+    spravochnik_path = Path(args.spravochnik)
+    if not spravochnik_path.exists():
+        raise SystemExit(f"Не найден справочник: {spravochnik_path}")
 
-    records = load_records_from_reference(reference_path, json_path)
+    records = load_records_from_spravochnik_json(spravochnik_path)
     db = SessionLocal()
     try:
         active_pairs: set[tuple[str, str]] = set()
@@ -41,9 +37,14 @@ def main():
             subtopic_name = record.get("subtopic", "").strip()
             description = record.get("description", "").strip()
             keywords = record.get("keywords", []) or []
+            synonyms = record.get("synonyms", []) or []
+            negative_keywords = record.get("negative_keywords", []) or record.get("negative", []) or []
             keywords_text = "\n".join(str(item).strip() for item in keywords if str(item).strip())
-            doc_text = build_doc_text(topic_name, subtopic_name, description, keywords_text)
-            source_hash = entry_source_hash(topic_name, subtopic_name, description, keywords_text, None)
+            synonyms_text = "\n".join(str(item).strip() for item in synonyms if str(item).strip()) or None
+            negative_keywords_text = "\n".join(str(item).strip() for item in negative_keywords if str(item).strip()) or None
+
+            doc_text = build_doc_text(topic_name, subtopic_name, description, keywords_text, synonyms_text)
+            source_hash = entry_source_hash(topic_name, subtopic_name, description, keywords_text, synonyms_text)
 
             entry = upsert_topic_catalog_entry(
                 db,
@@ -51,9 +52,9 @@ def main():
                 subtopic_name=subtopic_name,
                 description=description,
                 keywords_text=keywords_text,
-                synonyms_text=None,
-                negative_keywords_text=None,
-                source_name=reference_path.name,
+                synonyms_text=synonyms_text,
+                negative_keywords_text=negative_keywords_text,
+                source_name=spravochnik_path.name,
                 source_hash=source_hash,
                 is_active=True,
             )
@@ -63,7 +64,7 @@ def main():
             active_pairs.add((topic_name, subtopic_name))
             synced_entries.append(entry)
 
-        mark_missing_catalog_entries_inactive(db, active_pairs=active_pairs, source_name=reference_path.name)
+        mark_missing_catalog_entries_inactive(db, active_pairs=active_pairs, source_name=spravochnik_path.name)
 
         point_ids = sync_catalog_entries(synced_entries)
         for entry, point_id in zip(synced_entries, point_ids):
@@ -71,6 +72,8 @@ def main():
 
         print(f"Импортировано/обновлено записей: {len(synced_entries)}")
         print(f"Синхронизировано с Qdrant: {len(point_ids)}")
+        if len(point_ids) == 0 and len(synced_entries) > 0:
+            print("⚠️ Qdrant синхронизация вернула 0. Проверьте переменные окружения: QDRANT_URL, QDRANT_API, QDRANT_COLLECTION_NAME.")
     finally:
         db.close()
 

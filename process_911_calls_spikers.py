@@ -81,7 +81,7 @@ def collect_911_calls_metadata(db, *, root_dir: Path, recursive: bool = False) -
         if not octell_call_id:
             octell_call_id = f"NO_OCTELL::{file_path.stem}"
 
-        modified_at = datetime.fromtimestamp(file_path.stat().st_mtime)
+        modified_at = datetime.fromtimestamp(file_path.stat().st_mtime, tz=timezone.utc)
         duration_seconds = get_audio_duration_seconds(file_path)
 
         call = create_or_get_call(

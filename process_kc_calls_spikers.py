@@ -26,7 +26,7 @@ from db.crud import (
 
 AUDIO_EXTENSIONS = {".mp3", ".wav", ".m4a"}
 DEFAULT_ROOT = r"C:\Audio_share\Contact_center"
-DEFAULT_CALL_TYPE_CODE = "KЦ"
+DEFAULT_CALL_TYPE_CODE = "КЦ"
 DEFAULT_CALL_TYPE_NAME = "Контакт-центр"
 MODEL_DIR = model_settings.whisper_models_root
 TARGET_SR = 16000
@@ -114,7 +114,7 @@ def collect_kc_calls_metadata(db, *, root_dir: Path, day: str, manager_limit: in
             if not octell_call_id:
                 octell_call_id = f"NO_OCTELL::{file_path.stem}"
 
-            modified_at = datetime.fromtimestamp(file_path.stat().st_mtime)
+            modified_at = datetime.fromtimestamp(file_path.stat().st_mtime, tz=timezone.utc)
             part_number = parse_part_number(file_path.name)
             duration_seconds = get_audio_duration_seconds(file_path)
 

@@ -22,7 +22,7 @@ def run():
         # )
         # call_type_kc = get_or_create_call_type(
         #     db,
-        #     code="KЦ",
+        #     code="КЦ",
         #     name="Контакт-центр",
         #     description="Звонки в контакт-центр компании",
         # )

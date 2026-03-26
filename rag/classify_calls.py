@@ -6,7 +6,7 @@ import math
 import re
 import time
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 import numpy as np
@@ -282,8 +282,17 @@ def main():
 
     start_ts = time.time()
     db = SessionLocal()
-    pipeline_run = create_pipeline_run(db, started_at=datetime.utcnow(), status="running", pipeline_code=PIPELINE_CODE)
+    pipeline_run = create_pipeline_run(
+        db,
+        started_at=datetime.now(timezone.utc),
+        status="RUNNING",
+        pipeline_code=PIPELINE_CODE,
+    )
     processed = 0
+    call_type_code = (args.call_type or "").strip().upper()
+    # Canonical code is "КЦ" (Cyrillic), but accept legacy "KЦ"/"KC".
+    if call_type_code in {"КЦ", "KC", "KЦ"}:
+        call_type_code = "КЦ"
 
     try:
         catalog_entries = get_active_catalog_entries(db)
@@ -302,7 +311,7 @@ def main():
             model_kwargs={"local_files_only": True},
         )
 
-        calls = get_calls_for_classification(db, call_type_code=args.call_type, limit=args.limit)
+        calls = get_calls_for_classification(db, call_type_code=call_type_code, limit=args.limit)
         for call in calls:
             transcription = get_active_transcription(call)
             if not transcription or not transcription.text.strip():
@@ -402,8 +411,8 @@ def main():
         finish_pipeline_run(
             db,
             pipeline_run_id=pipeline_run.id,
-            status="success",
-            finished_at=datetime.utcnow(),
+            status="SUCCESS",
+            finished_at=datetime.now(timezone.utc),
             processed_calls=processed,
             duration_seconds=int(time.time() - start_ts),
             error_message=None,
@@ -412,8 +421,8 @@ def main():
         finish_pipeline_run(
             db,
             pipeline_run_id=pipeline_run.id,
-            status="failed",
-            finished_at=datetime.utcnow(),
+            status="FAILED",
+            finished_at=datetime.now(timezone.utc),
             processed_calls=processed,
             duration_seconds=int(time.time() - start_ts),
             error_message=str(exc),

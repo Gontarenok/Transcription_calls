@@ -37,10 +37,6 @@ def init_qdrant_client():
         prefer_grpc=False,
         https=True,
     )
-
-    # Отключаем TLS verify для корпоративного сертификата
-    # client._client.http.client.verify = False
-
     return client
 
 

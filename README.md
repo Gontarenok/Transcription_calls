@@ -11,7 +11,7 @@
 2. Установите зависимости:
 
 ```bash
-pip install -r requirements_api.txt
+pip install -r requirements.txt
 ```
 
 3. Скопируйте `.env.example` в `.env` и заполните значения.
