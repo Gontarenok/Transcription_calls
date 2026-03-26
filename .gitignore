@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg-info/
+.eggs/
+
+# Виртуальное окружение
+.env
+.venv
+venv/
+ENV/
+
+# IDE/редакторы
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Системные файлы
+.DS_Store
+Thumbs.db
+
+# Логи
+*.log
+
+# Временные файлы
+*.tmp
+*.bak
+
+# Выходные данные проекта
+logs/
+
+# Аудио (если не нужно хранить сырые звонки)
+Audio_share/
+*.wav
+*.mp3
+
+# Ключи и токены
+config.json
+secrets.json
+*.key
+*.pem

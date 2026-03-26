@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <title>Классифицированные звонки</title>
+  <style>
+    body { font-family: Inter, Arial, sans-serif; margin: 0; background:#f5f7fb; color:#111827; }
+    .container { max-width: 1500px; margin: 24px auto; padding: 0 16px; }
+    .card { background:#fff; border-radius: 16px; box-shadow: 0 8px 24px rgba(15,23,42,.08); padding: 16px; }
+    .head { display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; }
+    .role { padding:6px 10px; border-radius:999px; background:#eef2ff; color:#3730a3; font-weight:600; }
+    .menu { display:flex; gap:10px; margin: 6px 0 12px; flex-wrap:wrap; }
+    .menu a { text-decoration:none; color:#374151; background:#f3f4f6; padding:8px 12px; border-radius:10px; }
+    .menu a.active { background:#4f46e5; color:#fff; }
+    table { width:100%; border-collapse: collapse; font-size:13px; }
+    th, td { border-bottom:1px solid #e5e7eb; padding:10px; text-align:left; vertical-align:top; }
+    th { background:#f9fafb; }
+    .table-wrap { max-height:75vh; overflow:auto; border:1px solid #e5e7eb; border-radius:12px; }
+    .transcript { white-space:pre-wrap; max-width: 520px; }
+    details summary { cursor:pointer; color:#2563eb; }
+  </style>
+</head>
+<body>
+<div class="container">
+  <div class="card">
+    <div class="head"><h2>Классифицированные звонки</h2><div class="role">Роль: {{ role }}</div></div>
+    <div class="menu">
+      <a href="/calls?api_key={{ api_key }}">Звонки</a>
+      <a class="active" href="/classified-calls?api_key={{ api_key }}">Классификация</a>
+      <a href="/users?api_key={{ api_key }}">Пользователи</a>
+      {% if role == 'ADMIN' %}
+      <a href="/catalog?api_key={{ api_key }}">Справочник</a>
+      <a href="/pipeline-runs?api_key={{ api_key }}">Логи пайплайнов</a>
+      {% endif %}
+    </div>
+    <div>Найдено звонков: {{ rows|length }}</div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>ID</th><th>Octell ID</th><th>Тип</th><th>Менеджер</th><th>Дата</th><th>Статус</th><th>Тема</th><th>Подтема</th><th>Уверенность</th><th>Транскрибация</th></tr></thead>
+        <tbody>
+        {% for r in rows %}
+          <tr>
+            <td>{{ r.id }}</td>
+            <td>{{ r.octell_call_id or '' }}</td>
+            <td>{{ r.call_type }}</td>
+            <td>{{ r.manager_full_name or '' }}</td>
+            <td>{{ r.call_started_at }}</td>
+            <td>{{ r.status }}</td>
+            <td>{{ r.topic or '' }}</td>
+            <td>{{ r.subtopic or '' }}</td>
+            <td>{{ '%.2f'|format(r.classification_confidence) if r.classification_confidence is not none else '' }}</td>
+            <td>{% if r.transcription %}<details><summary>Показать</summary><div class="transcript">{{ r.transcription }}</div></details>{% endif %}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+</body>
+</html>

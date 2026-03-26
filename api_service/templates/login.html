@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <title>Вход в сервис звонков</title>
+  <style>
+    body { margin:0; font-family: Inter, Arial, sans-serif; background: linear-gradient(135deg,#eff6ff,#f5f3ff); }
+    .wrap { min-height:100vh; display:flex; align-items:center; justify-content:center; }
+    .card { width:420px; background:#fff; border-radius:16px; box-shadow:0 10px 30px rgba(0,0,0,.1); padding:24px; }
+    h2 { margin:0 0 8px; }
+    p { color:#555; }
+    .row { position:relative; margin-top:16px; }
+    input { width:100%; box-sizing:border-box; padding:10px 40px 10px 12px; border:1px solid #ddd; border-radius:10px; }
+    .eye { position:absolute; right:10px; top:8px; border:none; background:transparent; cursor:pointer; font-size:18px; }
+    .btn { margin-top:16px; width:100%; border:none; border-radius:10px; background:#4f46e5; color:#fff; padding:10px; cursor:pointer; }
+    .err { color:#b91c1c; margin-top:8px; }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card">
+    <h2>Сервис звонков</h2>
+    <p>Введите API ключ для доступа к звонкам и фильтрам.</p>
+    {% if error %}<div class="err">{{ error }}</div>{% endif %}
+    <form action="/calls" method="get">
+      <div class="row">
+        <input id="api_key" type="password" name="api_key" value="{{ api_key or '' }}" placeholder="API key" required />
+        <button type="button" class="eye" onclick="toggleKey()">👁</button>
+      </div>
+      <button class="btn" type="submit">Открыть</button>
+    </form>
+  </div>
+</div>
+<script>
+  function toggleKey() {
+    const el = document.getElementById('api_key');
+    el.type = el.type === 'password' ? 'text' : 'password';
+  }
+</script>
+</body>
+</html>
