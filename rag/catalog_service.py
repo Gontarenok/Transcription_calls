@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+import uuid
 from dataclasses import dataclass
 from typing import Iterable
 
@@ -69,6 +70,20 @@ def ensure_collection(client: QdrantClient, embedder: SentenceTransformer, colle
     )
 
 
+def _qdrant_point_id_for_upsert(entry: TopicCatalogEntry) -> int | str:
+    """Qdrant принимает только unsigned int или UUID; строки вида '123' — нет."""
+    raw = (entry.qdrant_point_id or "").strip()
+    if raw:
+        if raw.isdigit():
+            return int(raw)
+        try:
+            uuid.UUID(raw)
+            return raw
+        except ValueError:
+            pass
+    return int(entry.id)
+
+
 def encode_texts(embedder: SentenceTransformer, texts: list[str]) -> np.ndarray:
     embs = embedder.encode(texts, batch_size=64, convert_to_numpy=True, show_progress_bar=False)
     norms = np.linalg.norm(embs, axis=1, keepdims=True)
@@ -102,7 +117,7 @@ def sync_catalog_entries(entries: Iterable[TopicCatalogEntry], collection_name: 
     synced_ids: list[str] = []
 
     for idx, entry in enumerate(entries):
-        point_id = entry.qdrant_point_id or str(entry.id)
+        point_id = _qdrant_point_id_for_upsert(entry)
         payload = build_payload(entry)
         client.upsert(
             collection_name=collection_name,
@@ -124,7 +139,7 @@ def sync_catalog_entries(entries: Iterable[TopicCatalogEntry], collection_name: 
                 )
             ],
         )
-        synced_ids.append(point_id)
+        synced_ids.append(str(point_id))
     return synced_ids
 
 
