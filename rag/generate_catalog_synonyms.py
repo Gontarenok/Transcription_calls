@@ -59,7 +59,8 @@ def main():
         tokenizer=model_settings.gemma_model_path,
         device=DEVICE,
         torch_dtype="auto",
-        model_kwargs={"local_files_only": True},
+        # model/model tokenizer are local paths; passing local_files_only here
+        # can be double-applied by pipeline internals on some transformers versions.
     )
 
     db = SessionLocal()
