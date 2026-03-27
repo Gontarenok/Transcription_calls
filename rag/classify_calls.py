@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import re
 import time
 from dataclasses import dataclass
@@ -352,6 +353,39 @@ def choose_result(generator, prompt: str, candidates: list[Candidate]) -> tuple[
     return result, raw
 
 
+def write_debug_artifacts(
+    *,
+    debug_dir: str,
+    call_id: int,
+    transcription_id: int,
+    normalized_text: str,
+    scored_candidates: list[Candidate],
+    shortlist: list[Candidate],
+    prompt: str,
+    raw_llm: str | None,
+    parsed: dict[str, Any] | None,
+):
+    os.makedirs(debug_dir, exist_ok=True)
+    safe_name = f"call_{call_id}_tr_{transcription_id}"
+    payload = {
+        "call_id": call_id,
+        "transcription_id": transcription_id,
+        "normalized_text": normalized_text,
+        "shortlist": [c.__dict__ for c in shortlist],
+        "candidates_top10": [c.__dict__ for c in scored_candidates[:10]],
+        "prompt": prompt,
+        "raw_llm_output": raw_llm,
+        "parsed": parsed,
+    }
+    with open(os.path.join(debug_dir, f"{safe_name}.json"), "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+    with open(os.path.join(debug_dir, f"{safe_name}.prompt.txt"), "w", encoding="utf-8") as f:
+        f.write(prompt)
+    if raw_llm:
+        with open(os.path.join(debug_dir, f"{safe_name}.raw.txt"), "w", encoding="utf-8") as f:
+            f.write(raw_llm)
+
+
 def get_active_transcription(call) -> Any | None:
     for transcription in call.transcriptions:
         if transcription.is_active:
@@ -363,6 +397,7 @@ def main():
     parser = argparse.ArgumentParser(description="Классификация звонков КЦ по теме/подтеме с помощью Hybrid RAG")
     parser.add_argument("--call-type", default="КЦ")
     parser.add_argument("--limit", type=int, default=200)
+    parser.add_argument("--debug-dir", default=None, help="Папка для debug-артефактов (prompt/shortlist/raw/parsed) по каждому звонку")
     args = parser.parse_args()
 
     start_ts = time.time()
@@ -455,6 +490,18 @@ def main():
                 prompt = build_prompt(llm_text, shortlisted)
                 result, raw_llm = choose_result(generator, prompt, shortlisted)
                 decision = result["decision"]
+                if args.debug_dir:
+                    write_debug_artifacts(
+                        debug_dir=args.debug_dir,
+                        call_id=call.id,
+                        transcription_id=transcription.id,
+                        normalized_text=text,
+                        scored_candidates=candidates,
+                        shortlist=shortlisted,
+                        prompt=prompt,
+                        raw_llm=raw_llm,
+                        parsed=result,
+                    )
 
                 chosen = None
                 if decision != "OTHER":
