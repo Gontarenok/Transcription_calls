@@ -20,7 +20,7 @@ python rag/sync_topic_catalog.py
 
 ```bash
 python rag/generate_catalog_synonyms.py --limit 20
-python rag/generate_catalog_synonyms.py --limit 20 --write
+python rag/generate_catalog_synonyms.py --limit all
 ```
 
 - без `--write` — только просмотр предложений,

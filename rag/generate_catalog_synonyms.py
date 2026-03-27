@@ -64,8 +64,8 @@ def build_prompt(topic: str, subtopic: str, description: str, keywords_text: str
 
 def main():
     parser = argparse.ArgumentParser(description="Автоматически предлагает синонимы/варианты фраз для записей справочника")
-    parser.add_argument("--limit", type=int, default=10)
-    parser.add_argument("--write", action="store_true", help="Сохранить результат в БД")
+    parser.add_argument("--limit", default="10", help="Сколько записей обработать: число или 'all'")
+    parser.add_argument("--entry-id", type=int, default=None, help="Сгенерировать синонимы для одной записи справочника по ID")
     args = parser.parse_args()
 
     generator = pipeline(
@@ -90,7 +90,13 @@ def main():
 
     db = SessionLocal()
     try:
-        rows = list_topic_catalog_entries(db, include_inactive=False)[: args.limit]
+        if args.entry_id is not None:
+            rows = [row for row in list_topic_catalog_entries(db, include_inactive=True) if row.id == args.entry_id]
+        else:
+            rows = list_topic_catalog_entries(db, include_inactive=False)
+            if str(args.limit).strip().lower() != "all":
+                rows = rows[: int(args.limit)]
+
         for row in rows:
             t_low = (row.topic_name or "").strip().lower()
             s_low = (row.subtopic_name or "").strip().lower()
@@ -117,23 +123,18 @@ def main():
             if not suggestions:
                 preview = raw.strip().replace("\n", "\\n")
                 print("RAW (first 350 chars):", preview[:350])
-            if args.write and suggestions:
-                merged = []
-                existing = [line.strip() for line in (row.synonyms_text or "").splitlines() if line.strip()]
-                for item in existing + suggestions:
-                    if item not in merged:
-                        merged.append(item)
-                update_topic_catalog_entry(
-                    db,
-                    entry_id=row.id,
-                    topic_name=row.topic_name,
-                    subtopic_name=row.subtopic_name,
-                    description=row.description,
-                    keywords_text=row.keywords_text,
-                    synonyms_text="\n".join(merged),
-                    negative_keywords_text=row.negative_keywords_text,
-                    is_active=row.is_active,
-                )
+            # Always overwrite synonyms on each generation run.
+            update_topic_catalog_entry(
+                db,
+                entry_id=row.id,
+                topic_name=row.topic_name,
+                subtopic_name=row.subtopic_name,
+                description=row.description,
+                keywords_text=row.keywords_text,
+                synonyms_text="\n".join(suggestions) if suggestions else "",
+                negative_keywords_text=row.negative_keywords_text,
+                is_active=row.is_active,
+            )
     finally:
         db.close()
 
