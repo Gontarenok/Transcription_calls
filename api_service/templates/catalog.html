@@ -7,13 +7,22 @@
     body { font-family: Inter, Arial, sans-serif; margin: 0; background:#f5f7fb; color:#111827; }
     .container { max-width: 1700px; margin: 24px auto; padding: 0 16px; }
     .card { background:#fff; border-radius: 16px; box-shadow: 0 8px 24px rgba(15,23,42,.08); padding: 16px; }
-    .head { display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; }
+    .head { display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; gap:12px; flex-wrap:wrap; }
     .role { padding:6px 10px; border-radius:999px; background:#eef2ff; color:#3730a3; font-weight:600; }
     .menu { display:flex; gap:10px; margin-bottom:12px; flex-wrap:wrap; }
     .menu a { text-decoration:none; color:#374151; background:#f3f4f6; padding:8px 12px; border-radius:10px; }
     .menu a.active { background:#4f46e5; color:#fff; }
+    .menu .dropdown { position:relative; }
+    .menu .dropbtn { background:#f3f4f6; color:#374151; border:none; padding:8px 12px; border-radius:10px; cursor:pointer; }
+    .menu .dropdown-content { display:none; position:absolute; top:100%; left:0; background:#fff; border:1px solid #e5e7eb; border-radius:10px; min-width:220px; z-index:10; padding:6px 0; }
+    .menu .dropdown-content a { display:block; padding:8px 12px; background:#fff; color:#374151; border-radius:0; }
+    .menu .dropdown:hover .dropdown-content { display:block; }
     .toolbar { margin-bottom:16px; }
     .toolbar a { color:#2563eb; text-decoration:none; }
+    .right-head { display:flex; align-items:center; gap:12px; }
+    .api-wrap { position:relative; }
+    .api-wrap input[type="password"], .api-wrap input[type="text"] { padding-left:44px; padding-right:10px; }
+    .api-wrap .eye { position:absolute; left:8px; top:50%; transform:translateY(-50%); width:28px !important; min-width:28px; max-width:28px; height:28px; padding:0 !important; border:1px solid #d1d5db; background:#f3f4f6 !important; color:#111827; border-radius:8px; cursor:pointer; display:flex; align-items:center; justify-content:center; line-height:1; z-index:2; }
     table { width:100%; border-collapse: collapse; font-size:13px; }
     th, td { border-bottom:1px solid #e5e7eb; padding:10px; text-align:left; vertical-align:top; }
     th { background:#f9fafb; }
@@ -21,33 +30,85 @@
     textarea { min-height:84px; }
     .btn { background:#4f46e5; color:#fff; border:none; border-radius:8px; padding:10px 12px; cursor:pointer; }
     .small { font-size:12px; color:#6b7280; }
+    .form-block { border:1px solid #e5e7eb; border-radius:12px; padding:14px; background:#fafafa; margin-bottom:16px; }
+    .req { color:#dc2626; font-weight:700; margin-left:6px; }
+    .field-label { font-size:12px; color:#374151; margin-bottom:6px; }
   </style>
 </head>
 <body>
 <div class="container">
   <div class="card">
-    <div class="head"><h2>Справочник тем и подтем</h2><div class="role">Роль: {{ role }}</div></div>
+    <div class="head">
+      <h2>Справочник тем и подтем</h2>
+      <div class="right-head">
+        <div class="role">Роль: {{ role }}</div>
+        <div class="api-wrap">
+          <input id="api_key_catalog" type="password" value="{{ api_key }}" readonly />
+          <button type="button" class="eye" onclick="toggleKeyCatalog()">👁</button>
+        </div>
+      </div>
+    </div>
     <div class="menu">
       <a href="/calls?api_key={{ api_key }}">Звонки</a>
-      <a href="/classified-calls?api_key={{ api_key }}">Классификация</a>
+      {% if role == 'КЦ' %}
+        <a href="/classified-calls?api_key={{ api_key }}">Классификация</a>
+      {% endif %}
       <a href="/users?api_key={{ api_key }}">Пользователи</a>
-      <a class="active" href="/catalog?api_key={{ api_key }}">Справочник</a>
-      <a href="/pipeline-runs?api_key={{ api_key }}">Логи пайплайнов</a>
+      {% if role == 'ADMIN' %}
+        <div class="dropdown">
+          <button class="dropbtn" type="button">Администрирование</button>
+          <div class="dropdown-content">
+            <a class="active" href="/catalog?api_key={{ api_key }}">Справочник</a>
+            <a href="/pipeline-runs?api_key={{ api_key }}">Логи пайплайнов</a>
+          </div>
+        </div>
+      {% endif %}
     </div>
     <div class="toolbar">
       <div>Записей в справочнике: {{ rows|length }}</div>
       <div class="small">Поля тема / подтема / описание / ключевые слова обязательны. После сохранения запись синхронизируется с Qdrant.</div>
     </div>
 
-    <h3>Добавить новую запись</h3>
-    <form method="post" action="/catalog/save">
-      <input type="hidden" name="api_key" value="{{ api_key }}" />
-      <table>
-        <tbody>
-          <tr><td><input type="text" name="topic_name" placeholder="Тема" required></td><td><input type="text" name="subtopic_name" placeholder="Подтема" required></td><td><textarea name="description" placeholder="Описание" required></textarea></td><td><textarea name="keywords_text" placeholder="Ключевые слова, по одному на строку" required></textarea></td><td><textarea name="synonyms_text" placeholder="Синонимы / варианты фраз, по одному на строку"></textarea></td><td><textarea name="negative_keywords_text" placeholder="Негативные сигналы, по одному на строку"></textarea></td><td><label><input type="checkbox" name="is_active" value="true" checked> Активна</label><br><br><button class="btn" type="submit">Добавить</button></td></tr>
-        </tbody>
-      </table>
-    </form>
+    <div class="form-block">
+      <h3 style="margin-top:0;">Добавить новую запись</h3>
+      <form method="post" action="/catalog/save">
+        <input type="hidden" name="api_key" value="{{ api_key }}" />
+        <table>
+          <tbody>
+            <tr>
+              <td>
+                <div class="field-label">Тема<span class="req">*</span></div>
+                <input type="text" name="topic_name" placeholder="Тема" required>
+              </td>
+              <td>
+                <div class="field-label">Подтема<span class="req">*</span></div>
+                <input type="text" name="subtopic_name" placeholder="Подтема" required>
+              </td>
+              <td>
+                <div class="field-label">Описание<span class="req">*</span></div>
+                <textarea name="description" placeholder="Описание" required></textarea>
+              </td>
+              <td>
+                <div class="field-label">Ключевые слова<span class="req">*</span></div>
+                <textarea name="keywords_text" placeholder="Ключевые слова, по одному на строку" required></textarea>
+              </td>
+              <td>
+                <div class="field-label">Синонимы / фразы</div>
+                <textarea name="synonyms_text" placeholder="Синонимы / варианты фраз, по одному на строку"></textarea>
+              </td>
+              <td>
+                <div class="field-label">Негативные сигналы</div>
+                <textarea name="negative_keywords_text" placeholder="Негативные сигналы, по одному на строку"></textarea>
+              </td>
+              <td>
+                <label><input type="checkbox" name="is_active" value="true" checked> Активна</label><br><br>
+                <button class="btn" type="submit">Добавить</button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </form>
+    </div>
 
     <h3>Текущие записи</h3>
     <table>
@@ -79,5 +140,12 @@
     </table>
   </div>
 </div>
+
+<script>
+  function toggleKeyCatalog() {
+    const el = document.getElementById('api_key_catalog');
+    el.type = el.type === 'password' ? 'text' : 'password';
+  }
+</script>
 </body>
 </html>

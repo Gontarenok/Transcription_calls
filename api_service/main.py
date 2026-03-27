@@ -150,6 +150,7 @@ def call_to_out(call: Call, include_text: bool) -> CallOut:
         topic=active_class.topic_name if active_class else None,
         subtopic=active_class.subtopic_name if active_class else None,
         classification_confidence=active_class.confidence if active_class else None,
+        classification_reason=active_class.reasoning if active_class else None,
     )
 
 
@@ -224,15 +225,67 @@ def calls_ui(
 
 
 @app.get("/classified-calls", response_class=HTMLResponse)
-def classified_calls_ui(request: Request, api_key: str | None = Query(default=None), limit: int = Query(default=200, ge=1, le=2000)):
+def classified_calls_ui(
+    request: Request,
+    api_key: str | None = Query(default=None),
+    period: str | None = Query(default=None),
+    date_from: str | None = Query(default=None),
+    date_to: str | None = Query(default=None),
+    manager: str | None = Query(default=None),
+    topic: str | None = Query(default=None),
+    subtopic: str | None = Query(default=None),
+    limit: int = Query(default=200, ge=1, le=2000),
+):
     role = resolve_role_by_key(api_key)
     if not role:
         return templates.TemplateResponse("login.html", {"request": request, "api_key": "", "role": None, "error": "Неверный API ключ"})
+    if role != ROLE_KC:
+        raise HTTPException(status_code=403, detail="Доступно только для КЦ")
 
+    final_from, final_to, date_error = choose_date_range(period, date_from, date_to)
     db = SessionLocal()
     try:
-        calls = list_calls_with_active_classification(db, role_call_types=allowed_call_types_for_role(role), limit=limit)
-        rows = [call_to_out(c, include_text=True) for c in calls if get_active_classification(c)]
+        calls = list_calls_with_active_classification(
+            db,
+            role_call_types=allowed_call_types_for_role(role),
+            limit=limit,
+            date_from=final_from,
+            date_to=final_to,
+            manager=manager,
+            topic=topic,
+            subtopic=subtopic,
+        )
+        rows = [call_to_out(c, include_text=True) for c in calls]
+
+        # Filters UI (catalog-driven options)
+        catalog_entries = list_topic_catalog_entries(db, include_inactive=False)
+        topic_options = sorted({e.topic_name for e in catalog_entries})
+        if topic:
+            subtopic_options = sorted({e.subtopic_name for e in catalog_entries if e.topic_name == topic})
+        else:
+            subtopic_options = sorted({e.subtopic_name for e in catalog_entries})
+
+        # Managers list (based on current date range only)
+        manager_stmt = (
+            select(User.full_name)
+            .join(Call, Call.manager_id == User.id)
+            .join(CallType, Call.call_type_id == CallType.id)
+            .join(CallClassification, (CallClassification.call_id == Call.id) & (CallClassification.is_active.is_(True)))
+            .where(
+                Call.status == "CLASSIFIED",
+                CallType.code.in_(allowed_call_types_for_role(role)),
+            )
+        )
+        if final_from:
+            manager_stmt = manager_stmt.where(Call.call_started_at >= final_from)
+        if final_to:
+            manager_stmt = manager_stmt.where(Call.call_started_at <= final_to)
+        if topic:
+            manager_stmt = manager_stmt.where(CallClassification.topic_name == topic)
+        if subtopic:
+            manager_stmt = manager_stmt.where(CallClassification.subtopic_name == subtopic)
+        manager_stmt = manager_stmt.distinct().order_by(User.full_name.asc())
+        managers = [m for m in db.scalars(manager_stmt) if m]
         return templates.TemplateResponse(
             "classified_calls.html",
             {
@@ -240,8 +293,22 @@ def classified_calls_ui(request: Request, api_key: str | None = Query(default=No
                 "rows": rows,
                 "role": role,
                 "api_key": api_key or "",
+                "date_error": date_error,
                 "limit": limit,
                 "menu": menu_context(api_key or "", role, "classified_calls"),
+                "filters": {
+                    "api_key": api_key,
+                    "period": period or "",
+                    "date_from": date_from or "",
+                    "date_to": date_to or "",
+                    "manager": manager or "",
+                    "topic": topic or "",
+                    "subtopic": subtopic or "",
+                    "limit": limit,
+                },
+                "managers": managers,
+                "topic_options": topic_options,
+                "subtopic_options": subtopic_options,
             },
         )
     finally:
@@ -412,6 +479,71 @@ def export_calls_excel(
             bio,
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             headers={"Content-Disposition": 'attachment; filename="calls.xlsx"'},
+        )
+    finally:
+        db.close()
+
+
+@app.get("/api/classified-calls/export.xlsx")
+def export_classified_calls_excel(
+    role: str = Depends(get_current_role),
+    period: str | None = Query(default=None),
+    date_from: str | None = Query(default=None),
+    date_to: str | None = Query(default=None),
+    manager: str | None = Query(default=None),
+    topic: str | None = Query(default=None),
+    subtopic: str | None = Query(default=None),
+):
+    if role != ROLE_KC:
+        raise HTTPException(status_code=403, detail="Доступно только КЦ")
+
+    final_from, final_to, date_error = choose_date_range(period, date_from, date_to)
+    if date_error:
+        raise HTTPException(status_code=400, detail=date_error)
+
+    db = SessionLocal()
+    try:
+        # Экспортируем все строки по фильтрам (ограничение для стабильности достаточно большое)
+        calls = list_calls_with_active_classification(
+            db,
+            role_call_types=allowed_call_types_for_role(role),
+            limit=200000,
+            date_from=final_from,
+            date_to=final_to,
+            manager=manager,
+            topic=topic,
+            subtopic=subtopic,
+        )
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Classified Calls"
+        ws.append(["ID", "Octell ID", "Manager", "Started", "Duration", "Parts", "Topic", "Subtopic", "Confidence", "Reason", "Transcription"])
+
+        for c in calls:
+            active_trans = get_active_transcription(c)
+            active_class = get_active_classification(c)
+            ws.append([
+                c.id,
+                c.octell_call_id,
+                c.manager.full_name if c.manager else None,
+                c.call_started_at.isoformat() if c.call_started_at else None,
+                c.duration_seconds,
+                safe_parts_count(c),
+                active_class.topic_name if active_class else None,
+                active_class.subtopic_name if active_class else None,
+                active_class.confidence if active_class else None,
+                active_class.reasoning if active_class else None,
+                active_trans.text if active_trans else None,
+            ])
+
+        bio = BytesIO()
+        wb.save(bio)
+        bio.seek(0)
+        return StreamingResponse(
+            bio,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": 'attachment; filename="classified_calls.xlsx"'},
         )
     finally:
         db.close()
