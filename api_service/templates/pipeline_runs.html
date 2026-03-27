@@ -1,77 +1,35 @@
-<!doctype html>
-<html lang="ru">
-<head>
-  <meta charset="UTF-8" />
-  <title>Логи пайплайнов</title>
-  <style>
-    body { font-family: Inter, Arial, sans-serif; margin: 0; background:#f5f7fb; color:#111827; }
-    .container { max-width: 1400px; margin: 24px auto; padding: 0 16px; }
-    .card { background:#fff; border-radius: 16px; box-shadow: 0 8px 24px rgba(15,23,42,.08); padding: 16px; }
-    .head { display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; gap:12px; flex-wrap:wrap; }
-    .role { padding:6px 10px; border-radius:999px; background:#eef2ff; color:#3730a3; font-weight:600; }
-    .right-head { display:flex; align-items:center; gap:12px; }
-    .api-wrap { position:relative; }
-    .api-wrap input[type="password"], .api-wrap input[type="text"] { padding-left:44px; padding-right:10px; }
-    .api-wrap .eye { position:absolute; left:8px; top:50%; transform:translateY(-50%); width:28px !important; min-width:28px; max-width:28px; height:28px; padding:0 !important; border:1px solid #d1d5db; background:#f3f4f6 !important; color:#111827; border-radius:8px; cursor:pointer; display:flex; align-items:center; justify-content:center; line-height:1; z-index:2; }
-    .menu { display:flex; gap:10px; margin-bottom:12px; flex-wrap:wrap; }
-    .menu a { text-decoration:none; color:#374151; background:#f3f4f6; padding:8px 12px; border-radius:10px; }
-    .menu a.active { background:#4f46e5; color:#fff; }
-    .menu .dropdown { position:relative; }
-    .menu .dropbtn { background:#f3f4f6; color:#374151; border:none; padding:8px 12px; border-radius:10px; cursor:pointer; }
-    .menu .dropdown-content { display:none; position:absolute; top:100%; left:0; background:#fff; border:1px solid #e5e7eb; border-radius:10px; min-width:220px; z-index:10; padding:6px 0; }
-    .menu .dropdown-content a { display:block; padding:8px 12px; background:#fff; color:#374151; border-radius:0; }
-    .menu .dropdown:hover .dropdown-content { display:block; }
-    table { width:100%; border-collapse: collapse; font-size:13px; }
-    th, td { border-bottom:1px solid #e5e7eb; padding:10px; text-align:left; }
-    th { background:#f9fafb; }
-    .err { color:#b91c1c; }
-  </style>
-</head>
-<body>
-<div class="container">
-  <div class="card">
-    <div class="head">
-      <h2>Логи пайплайнов</h2>
-      <div class="right-head">
-        <div class="role">Роль: {{ role }}</div>
-        <div class="api-wrap">
-          <input id="api_key_pipelines" type="password" value="{{ api_key }}" readonly />
-          <button type="button" class="eye" onclick="toggleKeyPipelines()">👁</button>
-        </div>
-      </div>
-    </div>
-    <div class="menu">
-      <a href="/calls?api_key={{ api_key }}">Звонки</a>
-      {% if role == 'КЦ' %}
-        <a href="/classified-calls?api_key={{ api_key }}">Классификация</a>
-      {% endif %}
-      <a href="/users?api_key={{ api_key }}">Пользователи</a>
-      {% if role == 'ADMIN' %}
-        <div class="dropdown">
-          <button class="dropbtn" type="button">Администрирование</button>
-          <div class="dropdown-content">
-            <a href="/catalog?api_key={{ api_key }}">Справочник</a>
-            <a href="/pipeline-runs?api_key={{ api_key }}">Логи пайплайнов</a>
-          </div>
-        </div>
-      {% endif %}
-    </div>
-    <div>Найдено запусков: {{ rows|length }}</div>
+{% extends "base.html" %}
+
+{% block title %}Логи пайплайнов{% endblock %}
+
+{% block content %}
+<div class="card">
+  <div class="page-head">
+    <h2>Логи пайплайнов</h2>
+  </div>
+
+  <div class="actions">
+    <div class="counter">Найдено запусков: {{ rows|length }}</div>
+  </div>
+
+  <div class="table-wrap">
     <table>
       <thead><tr><th>ID</th><th>Пайплайн</th><th>Статус</th><th>Начало</th><th>Окончание</th><th>Длительность (сек)</th><th>Обработано звонков</th><th>Ошибка</th></tr></thead>
       <tbody>
       {% for r in rows %}
-      <tr><td>{{ r.id }}</td><td>{{ r.pipeline_code }}</td><td>{{ r.status }}</td><td>{{ r.started_at }}</td><td>{{ r.finished_at or '' }}</td><td>{{ r.duration_seconds or '' }}</td><td>{{ r.processed_calls }}</td><td class="err">{{ r.error_message or '' }}</td></tr>
+        <tr>
+          <td>{{ r.id }}</td>
+          <td>{{ r.pipeline_code }}</td>
+          <td>{{ r.status }}</td>
+          <td>{{ r.started_at }}</td>
+          <td>{{ r.finished_at or '' }}</td>
+          <td>{{ r.duration_seconds or '' }}</td>
+          <td>{{ r.processed_calls }}</td>
+          <td style="color:#b91c1c;">{{ r.error_message or '' }}</td>
+        </tr>
       {% endfor %}
       </tbody>
     </table>
   </div>
 </div>
-</body>
-<script>
-  function toggleKeyPipelines() {
-    const el = document.getElementById('api_key_pipelines');
-    el.type = el.type === 'password' ? 'text' : 'password';
-  }
-</script>
-</html>
+{% endblock %}

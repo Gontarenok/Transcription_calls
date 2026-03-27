@@ -161,7 +161,17 @@ def menu_context(api_key: str, role: str, active: str) -> dict:
 @app.get("/", response_class=HTMLResponse)
 def login_page(request: Request, api_key: str | None = Query(default=None)):
     role = resolve_role_by_key(api_key)
-    return templates.TemplateResponse("login.html", {"request": request, "api_key": api_key or "", "role": role})
+    return templates.TemplateResponse(
+        "login.html",
+        {
+            "request": request,
+            "api_key": api_key or "",
+            "role": role,
+            "show_header": False,
+            "active_page": "login",
+            "can_see_classification": bool(role in {ROLE_KC, ROLE_ADMIN}),
+        },
+    )
 
 
 @app.get("/calls", response_class=HTMLResponse)
@@ -178,7 +188,10 @@ def calls_ui(
 ):
     role = resolve_role_by_key(api_key)
     if not role:
-        return templates.TemplateResponse("login.html", {"request": request, "api_key": "", "role": None, "error": "Неверный API ключ"})
+        return templates.TemplateResponse(
+            "login.html",
+            {"request": request, "api_key": "", "role": None, "error": "Неверный API ключ", "show_header": False, "active_page": "login", "can_see_classification": False},
+        )
 
     final_from, final_to, date_error = choose_date_range(period, date_from, date_to)
 
@@ -204,6 +217,10 @@ def calls_ui(
                 "request": request,
                 "rows": rows,
                 "role": role,
+                "api_key": api_key or "",
+                "show_header": True,
+                "active_page": "calls",
+                "can_see_classification": bool(role in {ROLE_KC, ROLE_ADMIN}),
                 "managers": managers,
                 "status_options": STATUS_OPTIONS,
                 "date_error": date_error,
@@ -238,9 +255,12 @@ def classified_calls_ui(
 ):
     role = resolve_role_by_key(api_key)
     if not role:
-        return templates.TemplateResponse("login.html", {"request": request, "api_key": "", "role": None, "error": "Неверный API ключ"})
-    if role != ROLE_KC:
-        raise HTTPException(status_code=403, detail="Доступно только для КЦ")
+        return templates.TemplateResponse(
+            "login.html",
+            {"request": request, "api_key": "", "role": None, "error": "Неверный API ключ", "show_header": False, "active_page": "login", "can_see_classification": False},
+        )
+    if role not in {ROLE_KC, ROLE_ADMIN}:
+        raise HTTPException(status_code=403, detail="Доступно только для КЦ или ADMIN")
 
     final_from, final_to, date_error = choose_date_range(period, date_from, date_to)
     db = SessionLocal()
@@ -293,6 +313,9 @@ def classified_calls_ui(
                 "rows": rows,
                 "role": role,
                 "api_key": api_key or "",
+                "show_header": True,
+                "active_page": "classified_calls",
+                "can_see_classification": True,
                 "date_error": date_error,
                 "limit": limit,
                 "menu": menu_context(api_key or "", role, "classified_calls"),
@@ -319,7 +342,10 @@ def classified_calls_ui(
 def users_ui(request: Request, api_key: str | None = Query(default=None), limit: int = Query(default=1000, ge=1, le=5000)):
     role = resolve_role_by_key(api_key)
     if not role:
-        return templates.TemplateResponse("login.html", {"request": request, "api_key": "", "role": None, "error": "Неверный API ключ"})
+        return templates.TemplateResponse(
+            "login.html",
+            {"request": request, "api_key": "", "role": None, "error": "Неверный API ключ", "show_header": False, "active_page": "login", "can_see_classification": False},
+        )
 
     db = SessionLocal()
     try:
@@ -328,7 +354,19 @@ def users_ui(request: Request, api_key: str | None = Query(default=None), limit:
         if dept:
             query = query.where(User.department == dept)
         rows = list(db.scalars(query.limit(limit)))
-        return templates.TemplateResponse("users.html", {"request": request, "rows": rows, "role": role, "api_key": api_key, "menu": menu_context(api_key or "", role, "users")})
+        return templates.TemplateResponse(
+            "users.html",
+            {
+                "request": request,
+                "rows": rows,
+                "role": role,
+                "api_key": api_key or "",
+                "show_header": True,
+                "active_page": "users",
+                "can_see_classification": bool(role in {ROLE_KC, ROLE_ADMIN}),
+                "menu": menu_context(api_key or "", role, "users"),
+            },
+        )
     finally:
         db.close()
 
@@ -342,7 +380,19 @@ def pipeline_runs_ui(request: Request, api_key: str | None = Query(default=None)
     db = SessionLocal()
     try:
         runs = list(db.scalars(select(PipelineRun).order_by(PipelineRun.started_at.desc()).limit(limit)))
-        return templates.TemplateResponse("pipeline_runs.html", {"request": request, "rows": runs, "role": role, "api_key": api_key, "menu": menu_context(api_key or "", role, "pipeline_runs")})
+        return templates.TemplateResponse(
+            "pipeline_runs.html",
+            {
+                "request": request,
+                "rows": runs,
+                "role": role,
+                "api_key": api_key or "",
+                "show_header": True,
+                "active_page": "pipeline_runs",
+                "can_see_classification": True,
+                "menu": menu_context(api_key or "", role, "pipeline_runs"),
+            },
+        )
     finally:
         db.close()
 
@@ -363,6 +413,9 @@ def topic_catalog_ui(request: Request, api_key: str | None = Query(default=None)
                 "rows": rows,
                 "role": role,
                 "api_key": api_key or "",
+                "show_header": True,
+                "active_page": "catalog",
+                "can_see_classification": True,
                 "include_inactive": include_inactive,
                 "menu": menu_context(api_key or "", role, "catalog"),
             },
@@ -494,8 +547,8 @@ def export_classified_calls_excel(
     topic: str | None = Query(default=None),
     subtopic: str | None = Query(default=None),
 ):
-    if role != ROLE_KC:
-        raise HTTPException(status_code=403, detail="Доступно только КЦ")
+    if role not in {ROLE_KC, ROLE_ADMIN}:
+        raise HTTPException(status_code=403, detail="Доступно только КЦ или ADMIN")
 
     final_from, final_to, date_error = choose_date_range(period, date_from, date_to)
     if date_error:

@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{% block title %}Сервис звонков{% endblock %}</title>
+  <style>
+    :root {
+      --bg: #f5f7fb;
+      --card: #ffffff;
+      --text: #111827;
+      --muted: #6b7280;
+      --border: #e5e7eb;
+      --primary: #4f46e5;
+      --primary-weak: #eef2ff;
+      --primary-text: #3730a3;
+      --success: #059669;
+      --shadow: 0 8px 24px rgba(15,23,42,.08);
+      --radius: 16px;
+      --radius-sm: 10px;
+      --font: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Arial, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body { font-family: var(--font); margin: 0; background: var(--bg); color: var(--text); }
+    a { color: inherit; }
+    .container { max-width: 1500px; margin: 20px auto; padding: 0 16px; }
+    .card { background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow); padding: 16px; }
+
+    /* Header */
+    .app-header { position: sticky; top: 0; z-index: 50; background: rgba(245,247,251,.88); backdrop-filter: blur(8px); border-bottom: 1px solid rgba(229,231,235,.8); }
+    .header-inner { max-width: 1500px; margin: 0 auto; padding: 10px 16px; display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; }
+    .brand { display:flex; align-items:center; gap:10px; text-decoration:none; }
+    .logo { width: 34px; height: 34px; border-radius: 10px; background: linear-gradient(135deg, #4f46e5, #7c3aed); box-shadow: 0 8px 18px rgba(79,70,229,.22); display:flex; align-items:center; justify-content:center; color:#fff; font-weight:800; letter-spacing:.4px; }
+    .brand-title { display:flex; flex-direction:column; line-height:1.1; }
+    .brand-title strong { font-size: 14px; }
+    .brand-title span { font-size: 12px; color: var(--muted); }
+
+    .nav { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+    .nav a, .nav button {
+      text-decoration:none; color:#374151; background:#f3f4f6; padding:8px 12px; border-radius: 12px;
+      border: 1px solid rgba(229,231,235,.0);
+      cursor: pointer;
+      font: inherit;
+    }
+    .nav a.active { background: var(--primary); color: #fff; }
+    .dropdown { position:relative; }
+    .dropdown-content { display:none; position:absolute; top: calc(100% + 6px); left:0; background:#fff; border:1px solid var(--border); border-radius: 12px; min-width: 220px; z-index: 60; padding: 6px; box-shadow: 0 10px 30px rgba(0,0,0,.08); }
+    .dropdown-content a { display:block; padding:10px 10px; background:#fff; border-radius: 10px; }
+    .dropdown-content a:hover { background:#f3f4f6; }
+    .dropdown:hover .dropdown-content { display:block; }
+
+    .header-right { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+    .role { padding:6px 10px; border-radius:999px; background: var(--primary-weak); color: var(--primary-text); font-weight:600; }
+
+    .api-wrap { position:relative; }
+    .api-wrap input[type="password"], .api-wrap input[type="text"] {
+      width: 320px; max-width: 72vw;
+      padding: 10px 12px 10px 44px;
+      border-radius: 12px;
+      border: 1px solid #d1d5db;
+      background: #fff;
+      font: inherit;
+    }
+    .api-wrap .eye {
+      position:absolute; left:8px; top:50%; transform:translateY(-50%);
+      width:28px; height:28px; padding:0;
+      border:1px solid #d1d5db; background:#f3f4f6; color:#111827;
+      border-radius: 10px; cursor:pointer;
+      display:flex; align-items:center; justify-content:center; line-height:1;
+    }
+
+    /* Page */
+    .page-head { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom: 10px; flex-wrap:wrap; }
+    h2 { margin: 4px 0; font-size: 20px; }
+    .error { color:#b91c1c; margin: 6px 0 10px; }
+
+    .filters { display:grid; gap:10px; margin-bottom:10px; align-items:end; }
+    .filters.cols-6 { grid-template-columns: repeat(6, 1fr); }
+    .filters.cols-7 { grid-template-columns: repeat(7, 1fr); }
+    .filters.cols-8 { grid-template-columns: repeat(8, 1fr); }
+    .field label { font-size:12px; color:#4b5563; display:block; margin-bottom:4px; }
+    .filters input, .filters select, .filters button {
+      width:100%;
+      padding:10px;
+      border-radius: 12px;
+      border:1px solid #d1d5db;
+      background:#fff;
+      font: inherit;
+    }
+    .filters button { cursor:pointer; background: var(--primary); color:#fff; border:none; }
+
+    .actions { display:flex; justify-content:space-between; align-items:center; gap:10px; margin: 8px 0 12px; flex-wrap:wrap; }
+    .counter { font-size:14px; color:#374151; font-weight:600; }
+    .btn-secondary { background: var(--success); color:white; text-decoration:none; padding:10px 12px; border-radius:12px; display:inline-block; }
+
+    table { width:100%; border-collapse: collapse; font-size: 13px; }
+    th, td { border-bottom:1px solid var(--border); padding:10px; text-align:left; vertical-align: top; }
+    th { background:#f9fafb; position: sticky; top:0; z-index:1; }
+    .table-wrap { max-height: 70vh; overflow:auto; border:1px solid var(--border); border-radius: 14px; }
+    details summary { cursor:pointer; color:#2563eb; }
+    .transcript { white-space:pre-wrap; max-width: 560px; }
+
+    /* Form blocks */
+    .form-block { border:1px solid var(--border); border-radius:14px; padding:14px; background:#fafafa; margin-bottom:16px; }
+    .req { color:#dc2626; font-weight:700; margin-left:6px; }
+    .field-label { font-size:12px; color:#374151; margin-bottom:6px; }
+    textarea { width:100%; border:1px solid #d1d5db; border-radius: 12px; padding:10px; font: inherit; min-height: 90px; }
+    input[type="text"] { width:100%; border:1px solid #d1d5db; border-radius: 12px; padding:10px; font: inherit; }
+    .btn { background: var(--primary); color:#fff; border:none; border-radius:12px; padding:10px 12px; cursor:pointer; }
+
+    @media (max-width: 1100px) {
+      .filters.cols-6, .filters.cols-7, .filters.cols-8 { grid-template-columns: repeat(2, 1fr); }
+      .api-wrap input[type="password"], .api-wrap input[type="text"] { width: 100%; }
+    }
+  </style>
+  {% block extra_head %}{% endblock %}
+</head>
+<body>
+
+{% if show_header %}
+  <div class="app-header">
+    <div class="header-inner">
+      <a class="brand" href="/calls?api_key={{ api_key or '' }}">
+        <div class="logo">TC</div>
+        <div class="brand-title">
+          <strong>Transcription Calls</strong>
+          <span>КЦ / 911</span>
+        </div>
+      </a>
+
+      <nav class="nav">
+        <a class="{% if active_page=='calls' %}active{% endif %}" href="/calls?api_key={{ api_key or '' }}">Звонки</a>
+        {% if can_see_classification %}
+          <a class="{% if active_page=='classified_calls' %}active{% endif %}" href="/classified-calls?api_key={{ api_key or '' }}">Классификация</a>
+        {% endif %}
+        <a class="{% if active_page=='users' %}active{% endif %}" href="/users?api_key={{ api_key or '' }}">Пользователи</a>
+        {% if role == 'ADMIN' %}
+          <div class="dropdown">
+            <button type="button" class="dropbtn">Администрирование</button>
+            <div class="dropdown-content">
+              <a class="{% if active_page=='catalog' %}active{% endif %}" href="/catalog?api_key={{ api_key or '' }}">Справочник</a>
+              <a class="{% if active_page=='pipeline_runs' %}active{% endif %}" href="/pipeline-runs?api_key={{ api_key or '' }}">Логи пайплайнов</a>
+            </div>
+          </div>
+        {% endif %}
+      </nav>
+
+      <div class="header-right">
+        <div class="role">Роль: {{ role or '—' }}</div>
+        <div class="api-wrap">
+          <input id="api_key_global" type="password" value="{{ api_key or '' }}" placeholder="API key" />
+          <button type="button" class="eye" onclick="toggleKey()">👁</button>
+        </div>
+      </div>
+    </div>
+  </div>
+{% endif %}
+
+<div class="container">
+  {% block content %}{% endblock %}
+</div>
+
+<script>
+  function toggleKey() {
+    const el = document.getElementById('api_key_global');
+    if (!el) return;
+    el.type = el.type === 'password' ? 'text' : 'password';
+  }
+  // Sync global API key into any hidden inputs on page.
+  (function () {
+    const globalKey = document.getElementById('api_key_global');
+    if (!globalKey) return;
+    const sync = () => {
+      const inputs = document.querySelectorAll('input[name="api_key"]');
+      inputs.forEach((i) => { i.value = globalKey.value; });
+      // update menu links without reload is out of scope; server renders links from api_key query.
+    };
+    globalKey.addEventListener('input', sync);
+    sync();
+  })();
+</script>
+{% block extra_js %}{% endblock %}
+
+</body>
+</html>
+
