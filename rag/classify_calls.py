@@ -43,6 +43,47 @@ STOPWORDS = {
     "есть", "для", "это", "или", "как", "что", "по", "на", "в", "из", "у", "мы", "вы",
 }
 
+# Patterns from stereo-speakers transcripts: "[mm:ss] SPK1: text"
+_LINE_PREFIX_RE = re.compile(r"^\s*\[\d{2}:\d{2}\]\s*SPK\d\s*:\s*", flags=re.I)
+
+
+def normalize_call_text(raw: str) -> str:
+    """
+    Normalize ASR transcript for retrieval/scoring:
+    - remove timestamps/speaker prefixes
+    - lowercase, collapse whitespace
+    - normalize ё -> е
+    """
+    if not raw:
+        return ""
+    lines = []
+    for line in raw.splitlines():
+        line = _LINE_PREFIX_RE.sub("", line).strip()
+        if line:
+            lines.append(line)
+    text = " ".join(lines)
+    text = text.replace("ё", "е").replace("Ё", "Е")
+    text = re.sub(r"\s+", " ", text).strip().lower()
+    return text
+
+
+def has_existing_deal_signals(text: str) -> bool:
+    norm = normalize_text(text)
+    signals_existing_deal = [
+        "по счету", "по счёту", "счет", "счёт", "оплат", "оплата", "оплатил",
+        "по кп", "кп", "по коммерческому",
+        "ранее обсуждали", "по заказу", "заказ", "по текущему заказу",
+        "пересчитать", "перерасчет", "пересчет", "скорректировать заказ",
+        "выставить счет", "выставить счёт",
+    ]
+    return any(signal in norm for signal in signals_existing_deal)
+
+
+def seed_active_deal_candidates(text: str, catalog_map: dict[int, TopicCatalogEntry]) -> list[TopicCatalogEntry]:
+    if not has_existing_deal_signals(text):
+        return []
+    return [e for e in catalog_map.values() if e.is_active and normalize_text(e.topic_name) == normalize_text("Активная сделка")]
+
 
 @dataclass
 class Candidate:
@@ -174,14 +215,51 @@ def retrieve_candidates(qdrant: QdrantClient, query_vector: list[float]) -> list
 
 def score_candidates(text: str, hits: list[Any], catalog_map: dict[int, TopicCatalogEntry]) -> list[Candidate]:
     candidates: list[Candidate] = []
+    seen_entry_ids: set[int] = set()
     for hit in hits:
         payload = hit.payload or {}
         entry_id = payload.get("entry_id")
         entry = catalog_map.get(int(entry_id)) if entry_id is not None else None
         if not entry or not entry.is_active:
             continue
+        seen_entry_ids.add(entry.id)
         lexical_score, exact_hits, synonym_hits, negative_hits = compute_lexical_score(text, entry)
         semantic_score = float(hit.score)
+        scenario_score = auto_scenario_score(text, entry.subtopic_name, entry.topic_name)
+        final_score = (
+            0.45 * semantic_score
+            + 0.30 * lexical_score
+            + 0.15 * max(scenario_score, 0)
+            + 0.10 * (1.0 if len(exact_hits) >= 2 else 0.0)
+            - 0.10 * (1.0 if negative_hits else 0.0)
+        )
+        candidates.append(
+            Candidate(
+                entry_id=entry.id,
+                topic=entry.topic_name,
+                subtopic=entry.subtopic_name,
+                description=entry.description,
+                keywords=normalize_list(entry.keywords_text),
+                synonyms=normalize_list(entry.synonyms_text),
+                negative_keywords=normalize_list(entry.negative_keywords_text),
+                semantic_score=round(semantic_score, 4),
+                exact_hits=exact_hits,
+                synonym_hits=synonym_hits,
+                negative_hits=negative_hits,
+                lexical_score=round(lexical_score, 4),
+                scenario_score=round(scenario_score, 4),
+                final_score=round(max(0.0, min(final_score, 1.0)), 4),
+            )
+        )
+    candidates.sort(key=lambda item: item.final_score, reverse=True)
+
+    # Domain rule: if transcript mentions existing order/invoice/payment,
+    # ensure "Активная сделка" subtopics are present as candidates even if Qdrant retrieval missed them.
+    for entry in seed_active_deal_candidates(text, catalog_map):
+        if entry.id in seen_entry_ids:
+            continue
+        lexical_score, exact_hits, synonym_hits, negative_hits = compute_lexical_score(text, entry)
+        semantic_score = 0.0
         scenario_score = auto_scenario_score(text, entry.subtopic_name, entry.topic_name)
         final_score = (
             0.45 * semantic_score
@@ -332,7 +410,8 @@ def main():
                 continue
 
             set_call_status(db, call.id, "CLASSIFYING", error_message=None)
-            text = transcription.text.strip()
+            raw_text = transcription.text.strip()
+            text = normalize_call_text(raw_text)
             try:
                 query_vector = embed_text(embedder, text)
                 hits = retrieve_candidates(qdrant, query_vector)
@@ -371,7 +450,9 @@ def main():
                     processed += 1
                     continue
 
-                prompt = build_prompt(text, shortlisted)
+                # Use original transcript for LLM readability, but without timestamps/speaker prefixes.
+                llm_text = normalize_call_text(raw_text)
+                prompt = build_prompt(llm_text, shortlisted)
                 result, raw_llm = choose_result(generator, prompt, shortlisted)
                 decision = result["decision"]
 
