@@ -315,7 +315,7 @@ def build_prompt(text: str, candidates: list[Candidate]) -> str:
 
 Верни ответ СТРОГО в JSON без markdown и без пояснений вокруг:
 {{
-  "decision": "<entry_id или OTHER>",
+  "decision": "<entry_id (ТОЛЬКО ЧИСЛО) или OTHER>",
   "confidence": <число от 0 до 1>,
   "reason": "краткая причина выбора",
   "evidence": ["короткий фрагмент 1", "короткий фрагмент 2"]
@@ -339,9 +339,30 @@ def choose_result(generator, prompt: str, candidates: list[Candidate]) -> tuple[
         return_full_text=False,
     )[0]["generated_text"]
     payload = safe_json_load(raw) or {}
-    decision = str(payload.get("decision", "OTHER"))
     allowed = {str(candidate.entry_id) for candidate in candidates[:MAX_CANDIDATES_TO_LLM]}
-    if decision not in allowed:
+
+    decision_raw = payload.get("decision", "OTHER")
+    decision = "OTHER"
+    if isinstance(decision_raw, (int, float)):
+        decision = str(int(decision_raw))
+    else:
+        d = str(decision_raw or "").strip()
+        if d.upper() == "OTHER":
+            decision = "OTHER"
+        else:
+            # Accept variants like "id=15", "15)", "entry_id: 15"
+            m = re.search(r"\b(\d{1,10})\b", d)
+            if m:
+                decision = m.group(1)
+            else:
+                # Fallback: model may return subtopic text
+                d_norm = normalize_text(d).strip()
+                for c in candidates[:MAX_CANDIDATES_TO_LLM]:
+                    if normalize_text(c.subtopic).strip() == d_norm:
+                        decision = str(c.entry_id)
+                        break
+
+    if decision != "OTHER" and decision not in allowed:
         decision = "OTHER"
 
     result = {
