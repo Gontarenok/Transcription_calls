@@ -315,7 +315,7 @@ def main():
             tokenizer=model_settings.gemma_model_path,
             device=DEVICE,
             torch_dtype="auto",
-            model_kwargs={"local_files_only": True},
+            # model_kwargs={"local_files_only": True},
         )
 
         calls = get_calls_for_classification(db, call_type_code=call_type_code, limit=args.limit)
@@ -340,7 +340,10 @@ def main():
                 shortlisted = candidates[:MAX_CANDIDATES_TO_LLM]
                 best_pre_llm = shortlisted[0] if shortlisted else None
 
-                if not shortlisted or (best_pre_llm and best_pre_llm.final_score < MIN_ACCEPT_SCORE):
+                # On noisy ASR text lexical score is often low; hard fallback before LLM
+                # can over-route almost everything to OTHER.
+                # Keep only "no candidates" as hard fallback; let LLM decide OTHER otherwise.
+                if not shortlisted:
                     add_call_classification(
                         db,
                         call_id=call.id,

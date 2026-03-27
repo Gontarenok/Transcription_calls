@@ -518,6 +518,10 @@ def list_calls_with_active_classification(db: Session, *, role_call_types: set[s
     stmt = (
         select(Call)
         .join(CallType, Call.call_type_id == CallType.id)
+        .join(
+            CallClassification,
+            (CallClassification.call_id == Call.id) & (CallClassification.is_active.is_(True)),
+        )
         .options(
             selectinload(Call.call_type),
             selectinload(Call.manager),
@@ -529,7 +533,8 @@ def list_calls_with_active_classification(db: Session, *, role_call_types: set[s
         .order_by(Call.call_started_at.desc())
         .limit(limit)
     )
-    return list(db.scalars(stmt))
+    # join with classifications can duplicate rows; unique() keeps one Call entity per id
+    return list(db.scalars(stmt).unique())
 
 
 def create_pipeline_run(db: Session, *, started_at: datetime, status: str, pipeline_code: str) -> PipelineRun:
