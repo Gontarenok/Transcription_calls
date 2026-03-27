@@ -251,7 +251,14 @@ def build_prompt(text: str, candidates: list[Candidate]) -> str:
 
 
 def choose_result(generator, prompt: str, candidates: list[Candidate]) -> tuple[dict[str, Any], str]:
-    raw = generator(prompt, max_new_tokens=260, do_sample=False, repetition_penalty=1.05)[0]["generated_text"]
+    raw = generator(
+        prompt,
+        max_new_tokens=260,
+        max_length=4096,
+        do_sample=False,
+        repetition_penalty=1.05,
+        return_full_text=False,
+    )[0]["generated_text"]
     payload = safe_json_load(raw) or {}
     decision = str(payload.get("decision", "OTHER"))
     allowed = {str(candidate.entry_id) for candidate in candidates[:MAX_CANDIDATES_TO_LLM]}
@@ -312,9 +319,16 @@ def main():
         )
 
         calls = get_calls_for_classification(db, call_type_code=call_type_code, limit=args.limit)
+        print(f"Found {len(calls)} calls for classification (call_type_code={call_type_code})")
+        skipped_no_transcription = 0
+        skipped_empty_text = 0
         for call in calls:
             transcription = get_active_transcription(call)
             if not transcription or not transcription.text.strip():
+                if not transcription:
+                    skipped_no_transcription += 1
+                else:
+                    skipped_empty_text += 1
                 continue
 
             set_call_status(db, call.id, "CLASSIFYING", error_message=None)
@@ -408,6 +422,10 @@ def main():
             except Exception as exc:
                 set_call_status(db, call.id, "CLASSIFICATION_FAILED", error_message=str(exc))
 
+        print(
+            f"Classification done. processed={processed}, "
+            f"skipped_no_transcription={skipped_no_transcription}, skipped_empty_text={skipped_empty_text}"
+        )
         finish_pipeline_run(
             db,
             pipeline_run_id=pipeline_run.id,

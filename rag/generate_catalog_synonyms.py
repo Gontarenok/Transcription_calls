@@ -105,6 +105,7 @@ def main():
             raw = generator(
                 prompt,
                 max_new_tokens=180,
+                max_length=4096,
                 do_sample=False,
                 return_full_text=False,
             )[0]["generated_text"]
@@ -113,6 +114,9 @@ def main():
             print("Предложенные синонимы:")
             for item in suggestions:
                 print(" -", item)
+            if not suggestions:
+                preview = raw.strip().replace("\n", "\\n")
+                print("RAW (first 350 chars):", preview[:350])
             if args.write and suggestions:
                 merged = []
                 existing = [line.strip() for line in (row.synonyms_text or "").splitlines() if line.strip()]
