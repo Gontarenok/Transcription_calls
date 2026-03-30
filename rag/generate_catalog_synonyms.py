@@ -26,18 +26,23 @@ def parse_json_list(raw: str) -> list[str]:
         except Exception:
             pass
     match = re.search(r"\[.*\]", raw, flags=re.S)
-    if not match:
-        return []
-    try:
-        values = json.loads(match.group(0))
-    except Exception:
-        values = None
-    if isinstance(values, list):
-        return _dedupe_str_list(values)[:12]
+    if match:
+        try:
+            values = json.loads(match.group(0))
+        except Exception:
+            values = None
+        if isinstance(values, list):
+            return _dedupe_str_list(values)[:12]
 
     # Fallback: model may return plain newline-separated phrases instead of JSON.
+    text = (raw or "").strip()
+    parts = text.splitlines()
+    # Some models return literal "\n" sequences instead of real newlines.
+    if len(parts) <= 1 and "\\n" in text:
+        parts = [p for p in text.split("\\n")]
+
     line_items: list[str] = []
-    for line in (raw or "").splitlines():
+    for line in parts:
         item = line.strip()
         if not item:
             continue
@@ -150,6 +155,7 @@ def main():
                 negative_keywords_text=row.negative_keywords_text,
                 is_active=row.is_active,
             )
+            print(f"Saved to DB: synonyms={len(suggestions)}")
     finally:
         db.close()
 
