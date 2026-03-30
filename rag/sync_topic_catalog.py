@@ -6,6 +6,7 @@ from pathlib import Path
 from db.base import SessionLocal
 from db.crud import (
     mark_missing_catalog_entries_inactive,
+    mark_missing_catalog_entries_inactive_entries,
     set_catalog_qdrant_point_id,
     upsert_topic_catalog_entry,
 )
@@ -64,13 +65,19 @@ def main():
             active_pairs.add((topic_name, subtopic_name))
             synced_entries.append(entry)
 
-        mark_missing_catalog_entries_inactive(db, active_pairs=active_pairs, source_name=spravochnik_path.name)
+        changed_active_flags = mark_missing_catalog_entries_inactive_entries(
+            db,
+            active_pairs=active_pairs,
+            source_name=spravochnik_path.name,
+        )
 
-        point_ids = sync_catalog_entries(synced_entries)
-        for entry, point_id in zip(synced_entries, point_ids):
+        qdrant_sync_entries = synced_entries + [e for e in changed_active_flags if e.id not in {x.id for x in synced_entries}]
+        point_ids = sync_catalog_entries(qdrant_sync_entries)
+        for entry, point_id in zip(qdrant_sync_entries, point_ids):
             set_catalog_qdrant_point_id(db, entry.id, point_id)
 
         print(f"Импортировано/обновлено записей: {len(synced_entries)}")
+        print(f"Изменено флагов активности: {len(changed_active_flags)}")
         print(f"Синхронизировано с Qdrant: {len(point_ids)}")
         if len(point_ids) == 0 and len(synced_entries) > 0:
             print("⚠️ Qdrant синхронизация вернула 0. Проверьте переменные окружения: QDRANT_URL, QDRANT_API, QDRANT_COLLECTION_NAME.")

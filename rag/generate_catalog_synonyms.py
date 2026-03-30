@@ -8,8 +8,9 @@ import torch
 from transformers import pipeline
 
 from db.base import SessionLocal
-from db.crud import list_topic_catalog_entries, update_topic_catalog_entry
+from db.crud import list_topic_catalog_entries, set_catalog_qdrant_point_id, update_topic_catalog_entry
 from model_paths import model_settings
+from rag.catalog_service import qdrant_enabled, sync_catalog_entries
 
 DEVICE = 0 if torch.cuda.is_available() else -1
 PROMPT_VERSION = "catalog-synonyms-v1"
@@ -111,6 +112,7 @@ def main():
 
     db = SessionLocal()
     try:
+        updated_entries = []
         if args.entry_id is not None:
             rows = [row for row in list_topic_catalog_entries(db, include_inactive=True) if row.id == args.entry_id]
         else:
@@ -144,7 +146,7 @@ def main():
                 preview = raw.strip().replace("\n", "\\n")
                 print("RAW (first 350 chars):", preview[:350])
             # Always overwrite synonyms on each generation run.
-            update_topic_catalog_entry(
+            entry = update_topic_catalog_entry(
                 db,
                 entry_id=row.id,
                 topic_name=row.topic_name,
@@ -156,6 +158,13 @@ def main():
                 is_active=row.is_active,
             )
             print(f"Saved to DB: synonyms={len(suggestions)}")
+            updated_entries.append(entry)
+
+        if updated_entries and qdrant_enabled():
+            point_ids = sync_catalog_entries(updated_entries)
+            for entry, point_id in zip(updated_entries, point_ids):
+                set_catalog_qdrant_point_id(db, entry.id, point_id)
+            print(f"\nSynced to Qdrant: {len(point_ids)}")
     finally:
         db.close()
 

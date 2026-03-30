@@ -429,6 +429,32 @@ def mark_missing_catalog_entries_inactive(db: Session, active_pairs: set[tuple[s
     return changed
 
 
+def mark_missing_catalog_entries_inactive_entries(
+    db: Session,
+    *,
+    active_pairs: set[tuple[str, str]],
+    source_name: str = "reference_topics.txt",
+) -> list[TopicCatalogEntry]:
+    """
+    Marks entries as active/inactive based on active_pairs and returns only changed rows.
+
+    Use this when caller needs to propagate is_active to external systems (e.g. Qdrant).
+    """
+    stmt = select(TopicCatalogEntry).where(TopicCatalogEntry.source_name == source_name)
+    changed: list[TopicCatalogEntry] = []
+    for entry in db.scalars(stmt):
+        key = (entry.topic_name, entry.subtopic_name)
+        should_be_active = key in active_pairs
+        if entry.is_active != should_be_active:
+            entry.is_active = should_be_active
+            changed.append(entry)
+    if changed:
+        db.commit()
+        for entry in changed:
+            db.refresh(entry)
+    return changed
+
+
 def set_catalog_qdrant_point_id(db: Session, entry_id: int, point_id: str) -> TopicCatalogEntry | None:
     entry = db.get(TopicCatalogEntry, entry_id)
     if not entry:
