@@ -12,6 +12,7 @@ from typing import Any
 
 import numpy as np
 import torch
+from pathlib import Path
 from qdrant_client import QdrantClient
 from sentence_transformers import SentenceTransformer
 from transformers import pipeline
@@ -204,11 +205,12 @@ def safe_json_load(raw: str) -> dict[str, Any] | None:
     raw = (raw or "").strip()
     if not raw:
         return None
-    match = re.search(r"\{.*\}", raw, flags=re.S)
-    if not match:
+    # LLM can prepend/append garbage; prefer the last JSON object in output.
+    matches = list(re.finditer(r"\{.*?\}", raw, flags=re.S))
+    if not matches:
         return None
     try:
-        return json.loads(match.group(0))
+        return json.loads(matches[-1].group(0))
     except json.JSONDecodeError:
         return None
 
@@ -258,7 +260,6 @@ def choose_result(generator, prompt: str, candidates: list[Candidate]) -> tuple[
     raw = generator(
         prompt,
         max_new_tokens=260,
-        max_length=4096,
         do_sample=False,
         repetition_penalty=1.05,
         return_full_text=False,
@@ -337,11 +338,40 @@ def write_debug_artifacts(
             f.write(raw_llm)
 
 
+def init_generator():
+    gen = pipeline(
+        "text-generation",
+        model=model_settings.gemma_model_path,
+        tokenizer=model_settings.gemma_model_path,
+        device=DEVICE,
+        torch_dtype="auto",
+    )
+    # Reduce noisy warnings and prevent accidental truncation from model defaults.
+    try:
+        gc = gen.model.generation_config
+        if getattr(gc, "max_length", None) is not None:
+            gc.max_length = None
+        for name in ("temperature", "top_p", "top_k"):
+            if hasattr(gc, name):
+                setattr(gc, name, None)
+        if hasattr(gc, "do_sample"):
+            gc.do_sample = False
+    except Exception:
+        pass
+    return gen
+
+
+def default_run_dir(pipeline_run_id: int) -> str:
+    base = Path("output_audio_benchmark") / "classification_v2"
+    ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    return str(base / f"{ts}_run{pipeline_run_id}")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Классификация звонков КЦ по теме/подтеме (legacy retrieval scheme + new DB pipeline)")
     parser.add_argument("--call-type", default="КЦ")
     parser.add_argument("--limit", type=int, default=200)
-    parser.add_argument("--debug-dir", default=None, help="Папка для debug-артефактов по каждому звонку")
+    parser.add_argument("--debug-dir", default=None, help="Папка для debug-артефактов по каждому звонку (если не задано — создаётся автоматически)")
     args = parser.parse_args()
 
     start_ts = time.time()
@@ -352,6 +382,7 @@ def main():
         status="RUNNING",
         pipeline_code=PIPELINE_CODE,
     )
+    debug_dir = args.debug_dir or default_run_dir(pipeline_run.id)
 
     processed = 0
     skipped_no_transcription = 0
@@ -369,13 +400,7 @@ def main():
 
         qdrant = init_qdrant()
         embedder = SentenceTransformer(model_settings.embedding_model_path)
-        generator = pipeline(
-            "text-generation",
-            model=model_settings.gemma_model_path,
-            tokenizer=model_settings.gemma_model_path,
-            device=DEVICE,
-            torch_dtype="auto",
-        )
+        generator = init_generator()
 
         calls = get_calls_for_classification(db, call_type_code=call_type_code, limit=args.limit)
         print(f"Found {len(calls)} calls for classification (call_type_code={call_type_code})")
@@ -399,6 +424,7 @@ def main():
                 candidates = score_candidates_legacy(norm_text, hits, catalog_map)
 
                 if not candidates or no_signal(candidates):
+                    print(f"[call={call.id}] -> OTHER (no_signal)")
                     add_call_classification(
                         db,
                         call_id=call.id,
@@ -436,9 +462,9 @@ def main():
                 if decision != "OTHER":
                     chosen = next((c for c in candidates[:6] if str(c.entry_id) == str(decision)), None)
 
-                if args.debug_dir:
+                if debug_dir:
                     write_debug_artifacts(
-                        debug_dir=args.debug_dir,
+                        debug_dir=debug_dir,
                         call_id=call.id,
                         transcription_id=transcription.id,
                         normalized_text=norm_text,
@@ -449,6 +475,11 @@ def main():
                     )
 
                 if not chosen:
+                    # If parsing failed and no reason, store a short fallback for UX/debug.
+                    reason = result.get("reason") or None
+                    if not reason and raw_llm:
+                        reason = raw_llm.strip()[:500]
+                    print(f"[call={call.id}] -> OTHER (llm_other) conf={float(result.get('confidence') or 0.0):.2f}")
                     add_call_classification(
                         db,
                         call_id=call.id,
@@ -467,7 +498,7 @@ def main():
                         lexical_score=candidates[0].lexical_score if candidates else None,
                         semantic_score=candidates[0].semantic_score if candidates else None,
                         rerank_score=candidates[0].rerank_score if candidates else None,
-                        reasoning=result.get("reason"),
+                        reasoning=reason,
                         evidence=result.get("evidence") or [],
                         candidates=[asdict(c) for c in candidates],
                         raw_llm_output=raw_llm,
@@ -476,6 +507,13 @@ def main():
                     processed += 1
                     continue
 
+                reason = result.get("reason") or None
+                if not reason and raw_llm:
+                    reason = raw_llm.strip()[:500]
+                print(
+                    f"[call={call.id}] -> {chosen.topic} / {chosen.subtopic} "
+                    f"conf={float(result.get('confidence') or 0.0):.2f} score={chosen.final_score:.2f} sem={chosen.semantic_score:.2f} kw={chosen.lexical_score:.2f}"
+                )
                 add_call_classification(
                     db,
                     call_id=call.id,
@@ -494,7 +532,7 @@ def main():
                     lexical_score=chosen.lexical_score,
                     semantic_score=chosen.semantic_score,
                     rerank_score=chosen.rerank_score,
-                    reasoning=result.get("reason"),
+                    reasoning=reason,
                     evidence=result.get("evidence") or [],
                     candidates=[asdict(c) for c in candidates],
                     raw_llm_output=raw_llm,
@@ -508,9 +546,11 @@ def main():
         finish_pipeline_run(
             db,
             pipeline_run_id=pipeline_run.id,
-            finished_at=datetime.now(timezone.utc),
             status="FINISHED",
-            summary=f"processed={processed}, skipped_no_transcription={skipped_no_transcription}, skipped_empty_text={skipped_empty_text}",
+            finished_at=datetime.now(timezone.utc),
+            processed_calls=processed,
+            duration_seconds=int(time.time() - start_ts),
+            error_message=None,
         )
     finally:
         db.close()
