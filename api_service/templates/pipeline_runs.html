@@ -13,19 +13,19 @@
   </div>
 
   <div class="table-wrap">
-    <table>
-      <thead><tr><th>ID</th><th>Пайплайн</th><th>Статус</th><th>Начало</th><th>Окончание</th><th>Длительность (сек)</th><th>Обработано звонков</th><th>Ошибка</th></tr></thead>
+    <table class="sortable-table">
+      <thead><tr><th data-sort-type="num">ID</th><th data-sort-type="str">Пайплайн</th><th data-sort-type="str">Статус</th><th data-sort-type="date">Начало</th><th data-sort-type="date">Окончание</th><th data-sort-type="num">Длительность (сек)</th><th data-sort-type="num">Обработано звонков</th><th data-sort-type="str">Ошибка</th></tr></thead>
       <tbody>
       {% for r in rows %}
         <tr>
-          <td>{{ r.id }}</td>
-          <td>{{ r.pipeline_code }}</td>
-          <td>{{ r.status }}</td>
-          <td>{{ r.started_at }}</td>
-          <td>{{ r.finished_at or '' }}</td>
-          <td>{{ r.duration_seconds or '' }}</td>
-          <td>{{ r.processed_calls }}</td>
-          <td style="color:#b91c1c;">{{ r.error_message or '' }}</td>
+          <td data-sort-value="{{ r.id }}">{{ r.id }}</td>
+          <td data-sort-value="{{ r.pipeline_code|e }}">{{ r.pipeline_code }}</td>
+          <td data-sort-value="{{ r.status|e }}">{{ r.status }}</td>
+          <td data-sort-value="{{ r.started_at.isoformat() if r.started_at else '' }}">{{ r.started_at }}</td>
+          <td data-sort-value="{{ r.finished_at.isoformat() if r.finished_at else '' }}">{{ r.finished_at or '' }}</td>
+          <td data-sort-value="{{ r.duration_seconds if r.duration_seconds is not none else '' }}">{{ r.duration_seconds or '' }}</td>
+          <td data-sort-value="{{ r.processed_calls }}">{{ r.processed_calls }}</td>
+          <td style="color:#b91c1c;" data-sort-value="{{ (r.error_message or '')|e }}">{{ r.error_message or '' }}</td>
         </tr>
       {% endfor %}
       </tbody>

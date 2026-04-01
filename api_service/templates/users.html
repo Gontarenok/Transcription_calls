@@ -13,11 +13,16 @@
   </div>
 
   <div class="table-wrap">
-    <table>
-      <thead><tr><th>ID</th><th>ФИО</th><th>Domain</th><th>Department</th></tr></thead>
+    <table class="sortable-table">
+      <thead><tr><th data-sort-type="num">ID</th><th data-sort-type="str">ФИО</th><th data-sort-type="str">Domain</th><th data-sort-type="str">Department</th></tr></thead>
       <tbody>
       {% for u in rows %}
-        <tr><td>{{ u.id }}</td><td>{{ u.full_name or '' }}</td><td>{{ u.domain or '' }}</td><td>{{ u.department or '' }}</td></tr>
+        <tr>
+          <td data-sort-value="{{ u.id }}">{{ u.id }}</td>
+          <td data-sort-value="{{ (u.full_name or '')|e }}">{{ u.full_name or '' }}</td>
+          <td data-sort-value="{{ (u.domain or '')|e }}">{{ u.domain or '' }}</td>
+          <td data-sort-value="{{ (u.department or '')|e }}">{{ u.department or '' }}</td>
+        </tr>
       {% endfor %}
       </tbody>
     </table>

@@ -60,32 +60,32 @@
   </div>
 
   <div class="table-wrap">
-    <table>
+    <table class="sortable-table">
       <thead>
         <tr>
-          <th>ID</th>
-          <th>Octell ID</th>
-          <th>Тип</th>
-          <th>ФИО менеджера</th>
-          <th>Статус</th>
-          <th>Дата звонка</th>
-          <th>Длительность (сек)</th>
-          <th>Частей</th>
-          <th>Транскрибация</th>
+          <th data-sort-type="num">ID</th>
+          <th data-sort-type="str">Octell ID</th>
+          <th data-sort-type="str">Тип</th>
+          <th data-sort-type="str">ФИО менеджера</th>
+          <th data-sort-type="str">Статус</th>
+          <th data-sort-type="date">Дата звонка</th>
+          <th data-sort-type="num">Длительность (сек)</th>
+          <th data-sort-type="num">Частей</th>
+          <th data-sort-type="num">Транскрибация</th>
         </tr>
       </thead>
       <tbody>
       {% for r in rows %}
         <tr>
-          <td>{{ r.id }}</td>
-          <td>{{ r.octell_call_id or '' }}</td>
-          <td>{{ r.call_type }}</td>
-          <td>{{ r.manager_full_name or '' }}</td>
-          <td>{{ r.status }}</td>
-          <td>{{ r.call_started_at }}</td>
-          <td>{{ '%.1f'|format(r.duration_seconds) if r.duration_seconds is not none else '' }}</td>
-          <td>{{ r.parts_count }}</td>
-          <td>{% if r.transcription %}<details><summary>Показать</summary><div class="transcript">{{ r.transcription }}</div></details>{% endif %}</td>
+          <td data-sort-value="{{ r.id }}">{{ r.id }}</td>
+          <td data-sort-value="{{ (r.octell_call_id or '')|e }}">{{ r.octell_call_id or '' }}</td>
+          <td data-sort-value="{{ r.call_type|e }}">{{ r.call_type }}</td>
+          <td data-sort-value="{{ (r.manager_full_name or '')|e }}">{{ r.manager_full_name or '' }}</td>
+          <td data-sort-value="{{ r.status|e }}">{{ r.status }}</td>
+          <td data-sort-value="{{ r.call_started_at.isoformat() if r.call_started_at else '' }}">{{ r.call_started_at }}</td>
+          <td data-sort-value="{{ r.duration_seconds if r.duration_seconds is not none else '' }}">{{ '%.1f'|format(r.duration_seconds) if r.duration_seconds is not none else '' }}</td>
+          <td data-sort-value="{{ r.parts_count }}">{{ r.parts_count }}</td>
+          <td data-sort-value="{% if r.transcription %}{{ r.transcription|length }}{% else %}0{% endif %}">{% if r.transcription %}<details><summary>Показать</summary><div class="transcript">{{ r.transcription }}</div></details>{% endif %}</td>
         </tr>
       {% endfor %}
       </tbody>

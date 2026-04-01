@@ -55,33 +55,46 @@
     </div>
 
     <h3>Текущие записи</h3>
-    <table>
+    <div class="table-wrap">
+    <table class="sortable-table">
       <thead>
-        <tr><th>ID</th><th>Тема</th><th>Подтема</th><th>Описание</th><th>Ключевые слова</th><th>Синонимы / фразы</th><th>Негативные сигналы</th><th>Qdrant</th><th>Активна</th><th>Действие</th></tr>
+        <tr>
+          <th data-sort-type="num">ID</th>
+          <th data-sort-type="str">Тема</th>
+          <th data-sort-type="str">Подтема</th>
+          <th data-sort-type="str">Описание</th>
+          <th data-sort-type="str">Ключевые слова</th>
+          <th data-sort-type="str">Синонимы / фразы</th>
+          <th data-sort-type="str">Негативные сигналы</th>
+          <th data-sort-type="str">Qdrant</th>
+          <th data-sort-type="num">Активна</th>
+          <th data-sort-type="str">Действие</th>
+        </tr>
       </thead>
       <tbody>
       {% for row in rows %}
         <tr>
           <form method="post" action="/catalog/save">
-            <td>
+            <td data-sort-value="{{ row.id }}">
               {{ row.id }}
               <input type="hidden" name="api_key" value="{{ api_key }}" />
               <input type="hidden" name="entry_id" value="{{ row.id }}" />
             </td>
-            <td><input type="text" name="topic_name" value="{{ row.topic_name }}" required></td>
-            <td><input type="text" name="subtopic_name" value="{{ row.subtopic_name }}" required></td>
-            <td><textarea name="description" required>{{ row.description }}</textarea></td>
-            <td><textarea name="keywords_text" required>{{ row.keywords_text }}</textarea></td>
-            <td><textarea name="synonyms_text">{{ row.synonyms_text or '' }}</textarea></td>
-            <td><textarea name="negative_keywords_text">{{ row.negative_keywords_text or '' }}</textarea></td>
-            <td>{{ row.qdrant_point_id or '' }}</td>
-            <td><label><input type="checkbox" name="is_active" value="true" {% if row.is_active %}checked{% endif %}> да</label></td>
-            <td><button class="btn" type="submit">Сохранить</button></td>
+            <td data-sort-value="{{ row.topic_name|e }}"><input type="text" name="topic_name" value="{{ row.topic_name }}" required></td>
+            <td data-sort-value="{{ row.subtopic_name|e }}"><input type="text" name="subtopic_name" value="{{ row.subtopic_name }}" required></td>
+            <td data-sort-value="{{ (row.description or '')[:500]|e }}"><textarea name="description" required>{{ row.description }}</textarea></td>
+            <td data-sort-value="{{ (row.keywords_text or '')[:500]|e }}"><textarea name="keywords_text" required>{{ row.keywords_text }}</textarea></td>
+            <td data-sort-value="{{ (row.synonyms_text or '')[:500]|e }}"><textarea name="synonyms_text">{{ row.synonyms_text or '' }}</textarea></td>
+            <td data-sort-value="{{ (row.negative_keywords_text or '')[:500]|e }}"><textarea name="negative_keywords_text">{{ row.negative_keywords_text or '' }}</textarea></td>
+            <td data-sort-value="{{ (row.qdrant_point_id or '')|e }}">{{ row.qdrant_point_id or '' }}</td>
+            <td data-sort-value="{{ 1 if row.is_active else 0 }}"><label><input type="checkbox" name="is_active" value="true" {% if row.is_active %}checked{% endif %}> да</label></td>
+            <td data-sort-value=""><button class="btn" type="submit">Сохранить</button></td>
           </form>
         </tr>
       {% endfor %}
       </tbody>
     </table>
+    </div>
   </div>
 </div>
 {% endblock %}

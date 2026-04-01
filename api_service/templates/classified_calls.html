@@ -65,32 +65,32 @@
     </div>
 
     <div class="table-wrap">
-      <table>
+      <table class="sortable-table">
         <thead>
           <tr>
-            <th>ID</th>
-            <th>Octell ID</th>
-            <th>Менеджер</th>
-            <th>Дата</th>
-            <th>Тема</th>
-            <th>Подтема</th>
-            <th>Уверенность</th>
-            <th>Причина выбора</th>
-            <th>Транскрибация</th>
+            <th data-sort-type="num">ID</th>
+            <th data-sort-type="str">Octell ID</th>
+            <th data-sort-type="str">Менеджер</th>
+            <th data-sort-type="date">Дата</th>
+            <th data-sort-type="str">Тема</th>
+            <th data-sort-type="str">Подтема</th>
+            <th data-sort-type="num">Уверенность</th>
+            <th data-sort-type="str">Причина выбора</th>
+            <th data-sort-type="num">Транскрибация</th>
           </tr>
         </thead>
         <tbody>
         {% for r in rows %}
           <tr>
-            <td>{{ r.id }}</td>
-            <td>{{ r.octell_call_id or '' }}</td>
-            <td>{{ r.manager_full_name or '' }}</td>
-            <td>{{ r.call_started_at }}</td>
-            <td>{{ r.topic or '' }}</td>
-            <td>{{ r.subtopic or '' }}</td>
-            <td>{{ '%.2f'|format(r.classification_confidence) if r.classification_confidence is not none else '' }}</td>
-            <td>{{ r.classification_reason or '' }}</td>
-            <td>
+            <td data-sort-value="{{ r.id }}">{{ r.id }}</td>
+            <td data-sort-value="{{ (r.octell_call_id or '')|e }}">{{ r.octell_call_id or '' }}</td>
+            <td data-sort-value="{{ (r.manager_full_name or '')|e }}">{{ r.manager_full_name or '' }}</td>
+            <td data-sort-value="{{ r.call_started_at.isoformat() if r.call_started_at else '' }}">{{ r.call_started_at }}</td>
+            <td data-sort-value="{{ (r.topic or '')|e }}">{{ r.topic or '' }}</td>
+            <td data-sort-value="{{ (r.subtopic or '')|e }}">{{ r.subtopic or '' }}</td>
+            <td data-sort-value="{{ r.classification_confidence if r.classification_confidence is not none else '' }}">{{ '%.2f'|format(r.classification_confidence) if r.classification_confidence is not none else '' }}</td>
+            <td data-sort-value="{{ (r.classification_reason or '')|e }}">{{ r.classification_reason or '' }}</td>
+            <td data-sort-value="{% if r.transcription %}{{ r.transcription|length }}{% else %}0{% endif %}">
               {% if r.transcription %}
                 <details><summary>Показать</summary><div class="transcript">{{ r.transcription }}</div></details>
               {% endif %}
