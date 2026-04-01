@@ -49,13 +49,25 @@
             <option value="КЦ" {% if filters.call_type == 'КЦ' %}selected{% endif %}>КЦ</option>
           </select>
         </div>
-        <div class="field"><label>Лимит</label><input type="number" name="limit" value="{{ filters.limit }}" min="1" max="2000" /></div>
-        <div class="field"><label>&nbsp;</label><button type="submit">Применить фильтры</button></div>
+        <div class="field"><label>Лимит (на страницу)</label><input type="number" name="limit" value="{{ filters.limit }}" min="1" /></div>
+    </div>
+    <div class="filters-actions">
+      <input type="hidden" name="offset" value="0" />
+      <button type="submit" class="btn-filter-submit">Применить фильтры</button>
     </div>
   </form>
 
+  {% if pager is defined %}
+  <div class="pager">
+    {% if pager.prev_href %}<a href="{{ pager.prev_href }}">← Назад</a>{% endif %}
+    <span>{% if pager.total %}Строки {{ pager.from_row }}–{{ pager.to_row }} из {{ pager.total }}{% else %}Нет записей по фильтру{% endif %}</span>
+    {% if pager.next_href %}<a href="{{ pager.next_href }}">Вперёд →</a>{% endif %}
+    <span class="pager-muted">Сортировка столбцов — в браузере, по текущей странице.</span>
+  </div>
+  {% endif %}
+
   <div class="actions">
-    <div class="counter">Найдено строк: {{ rows|length }}</div>
+    <div class="counter">На странице: {{ rows|length }}{% if pager is defined and pager.total %} · всего по фильтру: {{ pager.total }}{% endif %}</div>
     <a class="btn-secondary" href="/api/calls/export.xlsx?api_key={{ api_key }}&period={{ filters.period }}&date_from={{ filters.date_from }}&date_to={{ filters.date_to }}&manager={{ filters.manager }}&status={{ filters.status }}&call_type={{ filters.call_type }}">Выгрузить в Excel</a>
   </div>
 

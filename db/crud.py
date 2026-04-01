@@ -540,17 +540,15 @@ def get_active_classification_for_call(db: Session, call_id: int) -> CallClassif
     return db.scalar(stmt)
 
 
-def list_calls_with_active_classification(
-    db: Session,
+def _classified_calls_base_stmt(
     *,
     role_call_types: set[str],
-    limit: int = 200,
     date_from: datetime | None = None,
     date_to: datetime | None = None,
     manager: str | None = None,
     topic: str | None = None,
     subtopic: str | None = None,
-) -> list[Call]:
+):
     stmt = (
         select(Call)
         .join(CallType, Call.call_type_id == CallType.id)
@@ -558,13 +556,6 @@ def list_calls_with_active_classification(
         .join(
             CallClassification,
             (CallClassification.call_id == Call.id) & (CallClassification.is_active.is_(True)),
-        )
-        .options(
-            selectinload(Call.call_type),
-            selectinload(Call.manager),
-            selectinload(Call.call_parts),
-            selectinload(Call.transcriptions),
-            selectinload(Call.classifications).selectinload(CallClassification.catalog_entry),
         )
         .where(CallType.code.in_(role_call_types), Call.status == "CLASSIFIED")
     )
@@ -578,8 +569,76 @@ def list_calls_with_active_classification(
         stmt = stmt.where(CallClassification.topic_name == topic)
     if subtopic:
         stmt = stmt.where(CallClassification.subtopic_name == subtopic)
+    return stmt
 
-    stmt = stmt.order_by(Call.call_started_at.desc()).limit(limit)
+
+def count_calls_with_active_classification(
+    db: Session,
+    *,
+    role_call_types: set[str],
+    date_from: datetime | None = None,
+    date_to: datetime | None = None,
+    manager: str | None = None,
+    topic: str | None = None,
+    subtopic: str | None = None,
+) -> int:
+    """Число звонков с активной классификацией по тем же фильтрам, что и list_calls_with_active_classification."""
+    stmt = (
+        select(func.count(func.distinct(Call.id)))
+        .select_from(Call)
+        .join(CallType, Call.call_type_id == CallType.id)
+        .join(User, Call.manager_id == User.id)
+        .join(
+            CallClassification,
+            (CallClassification.call_id == Call.id) & (CallClassification.is_active.is_(True)),
+        )
+        .where(CallType.code.in_(role_call_types), Call.status == "CLASSIFIED")
+    )
+    if date_from:
+        stmt = stmt.where(Call.call_started_at >= date_from)
+    if date_to:
+        stmt = stmt.where(Call.call_started_at <= date_to)
+    if manager:
+        stmt = stmt.where(User.full_name == manager)
+    if topic:
+        stmt = stmt.where(CallClassification.topic_name == topic)
+    if subtopic:
+        stmt = stmt.where(CallClassification.subtopic_name == subtopic)
+    return int(db.scalar(stmt) or 0)
+
+
+def list_calls_with_active_classification(
+    db: Session,
+    *,
+    role_call_types: set[str],
+    limit: int = 200,
+    offset: int = 0,
+    date_from: datetime | None = None,
+    date_to: datetime | None = None,
+    manager: str | None = None,
+    topic: str | None = None,
+    subtopic: str | None = None,
+) -> list[Call]:
+    stmt = _classified_calls_base_stmt(
+        role_call_types=role_call_types,
+        date_from=date_from,
+        date_to=date_to,
+        manager=manager,
+        topic=topic,
+        subtopic=subtopic,
+    )
+    stmt = (
+        stmt.options(
+            selectinload(Call.call_type),
+            selectinload(Call.manager),
+            selectinload(Call.call_parts),
+            selectinload(Call.transcriptions),
+            selectinload(Call.classifications).selectinload(CallClassification.catalog_entry),
+        )
+        .order_by(Call.call_started_at.desc())
+        .offset(max(0, offset))
+        .limit(limit)
+    )
     # join with classifications can duplicate rows; unique() keeps one Call entity per id
     return list(db.scalars(stmt).unique())
 

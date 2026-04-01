@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, time, timedelta, timezone
 from io import BytesIO
+from urllib.parse import urlencode
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
@@ -13,7 +14,14 @@ from sqlalchemy.orm import selectinload
 from api_service.auth import ROLE_911, ROLE_ADMIN, ROLE_KC, allowed_call_types_for_role, get_current_role, resolve_role_by_key
 from api_service.schemas import CallOut, CallsResponse, PipelineRunOut, PipelineRunsResponse, TopicCatalogEntriesResponse, TopicCatalogEntryOut, UserOut, UsersResponse
 from db.base import SessionLocal
-from db.crud import list_calls_with_active_classification, list_topic_catalog_entries, set_catalog_qdrant_point_id, upsert_topic_catalog_entry, update_topic_catalog_entry
+from db.crud import (
+    count_calls_with_active_classification,
+    list_calls_with_active_classification,
+    list_topic_catalog_entries,
+    set_catalog_qdrant_point_id,
+    update_topic_catalog_entry,
+    upsert_topic_catalog_entry,
+)
 from db.models import Call, CallClassification, CallType, PipelineRun, TopicCatalogEntry, User
 from rag.catalog_service import entry_source_hash, sync_catalog_entries
 
@@ -21,6 +29,73 @@ app = FastAPI(title="Audio Calls API", version="0.6.0")
 templates = Jinja2Templates(directory="api_service/templates")
 
 STATUS_OPTIONS = ["NEW", "TRANSCRIBING", "TRANSCRIBED", "CLASSIFYING", "CLASSIFIED", "CLASSIFICATION_FAILED", "FAILED", "SUMMARIZED"]
+
+_UI_LIMIT_MAX = 2_000_000
+
+
+def _calls_list_querystring(
+    *,
+    api_key: str,
+    period: str | None,
+    date_from: str | None,
+    date_to: str | None,
+    manager: str | None,
+    status: str | None,
+    call_type: str | None,
+    limit: int,
+    offset: int,
+) -> str:
+    q: dict[str, str] = {
+        "api_key": api_key or "",
+        "limit": str(limit),
+        "offset": str(max(0, offset)),
+    }
+    if period:
+        q["period"] = period
+    if date_from:
+        q["date_from"] = date_from
+    if date_to:
+        q["date_to"] = date_to
+    if manager:
+        q["manager"] = manager
+    if status:
+        q["status"] = status
+    ct = normalize_call_type_filter(call_type) or (call_type or "").strip()
+    if ct:
+        q["call_type"] = ct
+    return urlencode(q)
+
+
+def _classified_list_querystring(
+    *,
+    api_key: str,
+    period: str | None,
+    date_from: str | None,
+    date_to: str | None,
+    manager: str | None,
+    topic: str | None,
+    subtopic: str | None,
+    limit: int,
+    offset: int,
+) -> str:
+    q: dict[str, str] = {
+        "api_key": api_key or "",
+        "limit": str(limit),
+        "offset": str(max(0, offset)),
+    }
+    if period:
+        q["period"] = period
+    if date_from:
+        q["date_from"] = date_from
+    if date_to:
+        q["date_to"] = date_to
+    if manager:
+        q["manager"] = manager
+    if topic:
+        q["topic"] = topic
+    if subtopic:
+        q["subtopic"] = subtopic
+    return urlencode(q)
 
 
 def resolve_period(period: str | None) -> tuple[datetime | None, datetime | None]:
@@ -184,7 +259,8 @@ def calls_ui(
     manager: str | None = Query(default=None),
     status: str | None = Query(default=None),
     call_type: str | None = Query(default=None),
-    limit: int = Query(default=100, ge=1, le=2000),
+    limit: int = Query(default=1000, ge=1, le=_UI_LIMIT_MAX),
+    offset: int = Query(default=0, ge=0),
 ):
     role = resolve_role_by_key(api_key)
     if not role:
@@ -198,8 +274,23 @@ def calls_ui(
     db = SessionLocal()
     try:
         query = build_calls_query(role=role, date_from=final_from, date_to=final_to, manager=manager, status=status, call_type=call_type)
-        calls = list(db.scalars(query.order_by(Call.call_started_at.desc()).limit(limit)))
+        total = int(db.scalar(select(func.count()).select_from(query.subquery())) or 0)
+        calls = list(db.scalars(query.order_by(Call.call_started_at.desc()).offset(offset).limit(limit)))
         rows = [call_to_out(c, include_text=True) for c in calls]
+        ct_filter = normalize_call_type_filter(call_type) or ""
+        pager = {
+            "total": total,
+            "offset": offset,
+            "limit": limit,
+            "from_row": offset + 1 if rows else 0,
+            "to_row": offset + len(rows),
+            "prev_href": f"/calls?{_calls_list_querystring(api_key=api_key or '', period=period, date_from=date_from, date_to=date_to, manager=manager, status=status, call_type=ct_filter or (call_type or ''), limit=limit, offset=max(0, offset - limit))}"
+            if offset > 0
+            else None,
+            "next_href": f"/calls?{_calls_list_querystring(api_key=api_key or '', period=period, date_from=date_from, date_to=date_to, manager=manager, status=status, call_type=ct_filter or (call_type or ''), limit=limit, offset=offset + limit)}"
+            if offset + len(rows) < total
+            else None,
+        }
 
         manager_stmt = (
             select(User.full_name)
@@ -234,7 +325,9 @@ def calls_ui(
                     "status": status or "",
                     "call_type": normalize_call_type_filter(call_type) or "",
                     "limit": limit,
+                    "offset": offset,
                 },
+                "pager": pager,
             },
         )
     finally:
@@ -251,7 +344,8 @@ def classified_calls_ui(
     manager: str | None = Query(default=None),
     topic: str | None = Query(default=None),
     subtopic: str | None = Query(default=None),
-    limit: int = Query(default=200, ge=1, le=2000),
+    limit: int = Query(default=1000, ge=1, le=_UI_LIMIT_MAX),
+    offset: int = Query(default=0, ge=0),
 ):
     role = resolve_role_by_key(api_key)
     if not role:
@@ -265,10 +359,21 @@ def classified_calls_ui(
     final_from, final_to, date_error = choose_date_range(period, date_from, date_to)
     db = SessionLocal()
     try:
+        role_types = allowed_call_types_for_role(role)
+        total = count_calls_with_active_classification(
+            db,
+            role_call_types=role_types,
+            date_from=final_from,
+            date_to=final_to,
+            manager=manager,
+            topic=topic,
+            subtopic=subtopic,
+        )
         calls = list_calls_with_active_classification(
             db,
-            role_call_types=allowed_call_types_for_role(role),
+            role_call_types=role_types,
             limit=limit,
+            offset=offset,
             date_from=final_from,
             date_to=final_to,
             manager=manager,
@@ -276,6 +381,19 @@ def classified_calls_ui(
             subtopic=subtopic,
         )
         rows = [call_to_out(c, include_text=True) for c in calls]
+        pager = {
+            "total": total,
+            "offset": offset,
+            "limit": limit,
+            "from_row": offset + 1 if rows else 0,
+            "to_row": offset + len(rows),
+            "prev_href": f"/classified-calls?{_classified_list_querystring(api_key=api_key or '', period=period, date_from=date_from, date_to=date_to, manager=manager, topic=topic, subtopic=subtopic, limit=limit, offset=max(0, offset - limit))}"
+            if offset > 0
+            else None,
+            "next_href": f"/classified-calls?{_classified_list_querystring(api_key=api_key or '', period=period, date_from=date_from, date_to=date_to, manager=manager, topic=topic, subtopic=subtopic, limit=limit, offset=offset + limit)}"
+            if offset + len(rows) < total
+            else None,
+        }
 
         # Filters UI (catalog-driven options)
         catalog_entries = list_topic_catalog_entries(db, include_inactive=False)
@@ -328,7 +446,9 @@ def classified_calls_ui(
                     "topic": topic or "",
                     "subtopic": subtopic or "",
                     "limit": limit,
+                    "offset": offset,
                 },
+                "pager": pager,
                 "managers": managers,
                 "topic_options": topic_options,
                 "subtopic_options": subtopic_options,
@@ -611,7 +731,7 @@ def calls_api(
     manager: str | None = Query(default=None),
     status: str | None = Query(default=None),
     call_type: str | None = Query(default=None),
-    limit: int = Query(default=100, ge=1, le=2000),
+    limit: int = Query(default=1000, ge=1, le=_UI_LIMIT_MAX),
     offset: int = Query(default=0, ge=0),
     include_text: bool = Query(default=False),
 ):
