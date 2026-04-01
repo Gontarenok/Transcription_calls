@@ -102,18 +102,27 @@
     }
     .filters-actions .btn-filter-submit:hover { filter: brightness(1.05); }
 
-    .pager {
+    .pager-line {
       display: flex;
       align-items: center;
       gap: 14px;
       flex-wrap: wrap;
-      margin: 10px 0 6px;
+      margin: 10px 0 4px;
       font-size: 13px;
       color: #374151;
     }
-    .pager a { color: var(--primary); font-weight: 600; text-decoration: none; }
-    .pager a:hover { text-decoration: underline; }
-    .pager .pager-muted { color: var(--muted); }
+    .pager-line a { color: var(--primary); font-weight: 600; text-decoration: none; }
+    .pager-line a:hover { text-decoration: underline; }
+    .pager-total { font-size: 14px; font-weight: 600; color: #111827; margin-bottom: 8px; }
+    .volume-notice {
+      margin: 8px 0 10px;
+      padding: 10px 12px;
+      border-radius: 12px;
+      background: #fffbeb;
+      border: 1px solid #fcd34d;
+      color: #92400e;
+      font-size: 13px;
+    }
 
     .actions { display:flex; justify-content:space-between; align-items:center; gap:10px; margin: 8px 0 12px; flex-wrap:wrap; }
     .counter { font-size:14px; color:#374151; font-weight:600; }

@@ -12,7 +12,7 @@
 
   <form method="get" action="/calls">
     <input type="hidden" name="api_key" value="{{ api_key }}" />
-    <div class="filters cols-7">
+    <div class="filters cols-6">
       <div class="field">
           <label>Период</label>
           <select name="period">
@@ -49,25 +49,30 @@
             <option value="КЦ" {% if filters.call_type == 'КЦ' %}selected{% endif %}>КЦ</option>
           </select>
         </div>
-        <div class="field"><label>Лимит (на страницу)</label><input type="number" name="limit" value="{{ filters.limit }}" min="1" /></div>
     </div>
     <div class="filters-actions">
-      <input type="hidden" name="offset" value="0" />
       <button type="submit" class="btn-filter-submit">Применить фильтры</button>
     </div>
   </form>
 
-  {% if pager is defined %}
-  <div class="pager">
-    {% if pager.prev_href %}<a href="{{ pager.prev_href }}">← Назад</a>{% endif %}
-    <span>{% if pager.total %}Строки {{ pager.from_row }}–{{ pager.to_row }} из {{ pager.total }}{% else %}Нет записей по фильтру{% endif %}</span>
-    {% if pager.next_href %}<a href="{{ pager.next_href }}">Вперёд →</a>{% endif %}
-    <span class="pager-muted">Сортировка столбцов — в браузере, по текущей странице.</span>
+  {% if list_volume_notice %}
+  <div class="volume-notice">
+    По выбранным фильтрам найдено очень много записей (всего <strong>{{ pager.total }}</strong>, порог предупреждения {{ list_soft_cap }}).
+    Таблица открывается по {{ pager.page_size }} строк на страницу — при необходимости сузьте период или фильтры, либо воспользуйтесь выгрузкой в Excel.
   </div>
   {% endif %}
 
+  {% if pager is defined %}
+  <div class="pager-line">
+    {% if pager.prev_href %}<a href="{{ pager.prev_href }}">← Назад</a>{% endif %}
+    <span>{% if pager.total %}Строки {{ pager.from_row }}–{{ pager.to_row }} из {{ pager.total }}{% else %}Нет записей по фильтру{% endif %}</span>
+    {% if pager.next_href %}<a href="{{ pager.next_href }}">Вперёд →</a>{% endif %}
+  </div>
+  <div class="pager-total">Всего: {{ pager.total }}</div>
+  {% endif %}
+
   <div class="actions">
-    <div class="counter">На странице: {{ rows|length }}{% if pager is defined and pager.total %} · всего по фильтру: {{ pager.total }}{% endif %}</div>
+    <div></div>
     <a class="btn-secondary" href="/api/calls/export.xlsx?api_key={{ api_key }}&period={{ filters.period }}&date_from={{ filters.date_from }}&date_to={{ filters.date_to }}&manager={{ filters.manager }}&status={{ filters.status }}&call_type={{ filters.call_type }}">Выгрузить в Excel</a>
   </div>
 
