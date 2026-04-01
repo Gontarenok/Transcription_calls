@@ -35,7 +35,11 @@ pip install -r requirements.txt
 - `WHISPER_MODEL_MEDIUM`
 - `WHISPER_MODEL_LARGE`
 - `GEMMA_MODEL_PATH`
-- `EMBEDDING_MODEL_PATH`
+- `EMBEDDING_MODEL_PATH` (приоритетный путь к эмбеддингу)
+- либо `EMBEDDING_MODEL_SBER_PATH` / `EMBEDDING_MODEL_MINI_PATH` (см. `model_paths.py`)
+
+Для RAG / Qdrant:
+- `QDRANT_URL`, `QDRANT_API` (или `QDRANT_API_KEY`), `QDRANT_COLLECTION_NAME` (или `QDRANT_COLLECTION_TOPICS`)
 
 ## 3) Запуск FastAPI
 
@@ -85,32 +89,92 @@ uvicorn api_service.main:app --host 0.0.0.0 --port 5000
 - пагинация в UI по звонкам
 - отдельная страница пользователей с ролевым ограничением по департаментам
 - отдельная страница логов запусков пайплайнов (только ADMIN)
+- страница «Классификация» (роли `КЦ` и `ADMIN`): фильтры, причина выбора темы, выгрузка в Excel
+- страница «Справочник тем» (ADMIN): редактирование каталога; при сохранении запись синхронизируется в Qdrant
 
-## 7) Подготовка к Docker (следующий этап)
+## 7) RAG: справочник тем, синонимы, Qdrant
 
-Проект уже подготовлен к контейнеризации:
+1. **Импорт справочника в БД и векторную БД** — `rag/sync_topic_catalog.py` (источник по умолчанию: `rag/spravochnik.json`):
+   ```bash
+   python rag/sync_topic_catalog.py
+   ```
+2. **Генерация синонимов** — `rag/generate_catalog_synonyms.py` (LLM Gemma, запись в `topic_catalog_entries.synonyms_text`; при настроенном `QDRANT_URL` точки обновляются в Qdrant):
+   ```bash
+   python rag/generate_catalog_synonyms.py --limit 10
+   python rag/generate_catalog_synonyms.py --limit all
+   python rag/generate_catalog_synonyms.py --entry-id 11
+   ```
+3. Скрипты в `rag/old/` считаются устаревшими и не используются в прод-контуре.
+
+Подробнее по архитектуре — `README_ARCHITECT.md`.
+
+## 8) Классификация звонков КЦ
+
+### Статусы и выбор звонков
+
+Функция `get_calls_for_classification` в `db/crud.py` по умолчанию берёт звонки со статусами **`TRANSCRIBED`** и **`CLASSIFICATION_FAILED`** (повторная попытка после ошибки).
+
+Во время обработки скрипт выставляет **`CLASSIFYING`**, при успехе — **`CLASSIFIED`**, при исключении — **`CLASSIFICATION_FAILED`**.
+
+Тип звонка по умолчанию: **`КЦ`** (`--call-type`).
+
+### Рекомендуемый скрипт: `rag/classify_calls_v2.py`
+
+Это текущий вариант для экспериментов и перезапуска: гибридный **ретривел как в** `rag/old/rag_summary_with_qdrant_final_3.py` (семантика из Qdrant + сигнал по ключевым словам из каталога, веса short/long, правило «есть keyword hit → не ниже порога»), плюс **LLM выбирает одну подтему** из shortlist в формате JSON (`decision` = `entry_id` или `OTHER`). Результат пишется в **`call_classifications`** и в **`pipeline_runs`** (`pipeline_code = КЦ_CLASSIFICATION`).
+
+**Запуск:**
+```bash
+python rag/classify_calls_v2.py --call-type КЦ --limit 200
+```
+
+**Артефакты на диске** (по умолчанию, без `--debug-dir`):
+`output_audio_benchmark/classification_v2/<дата-время>_run<id_запуска>/` — для каждого звонка JSON, prompt и сырой ответ LLM.
+
+**Переменные окружения:** `DATABASE_URL`, `QDRANT_*`, `GEMMA_MODEL_PATH`, путь к эмбеддингу (см. `.env.example` и `model_paths.py`).
+
+### Альтернатива: `rag/classify_calls.py`
+
+Более новая схема скоринга (лексика + синонимы + негативные ключи + эвристики сценария). Можно использовать для сравнения с v2.
+
+### Связи в БД (что не трогает классификация)
+
+- **`transcriptions`** — не изменяются; классификация ссылается на активную транскрипцию через `transcription_id`.
+- **`calls.pipeline_run_id`** — обычно относится к **транскрибации**, скрипты классификации его не перезаписывают.
+- **`topic_catalog_entries`** — только чтение (и опционально `catalog_entry_id` в результате).
+- **`pipeline_runs`** — создаётся одна запись на запуск скрипта; строки в `call_classifications` ссылаются на неё.
+
+## 9) Сброс тестовых классификаций (миграция SQL)
+
+Чтобы удалить все строки из `call_classifications` и вернуть звонки **типа КЦ** из состояний классификации обратно в **`TRANSCRIBED`**:
+
+```bash
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/migrations/20260401_reset_call_classifications_and_kc_status.sql
+```
+
+Миграция обнуляет таблицу классификаций целиком и обновляет только звонки с `call_types.code` в `('КЦ','KЦ','KC')` и статусом `CLASSIFIED`, `CLASSIFICATION_FAILED` или `CLASSIFYING`. Транскрипты, справочник и Qdrant не меняются.
+
+В файле миграции есть закомментированный блок для удаления строк `pipeline_runs` с `pipeline_code = 'КЦ_CLASSIFICATION'` (очистка истории в UI).
+
+## 10) Подготовка к Docker (следующий этап)
+
 - единый env-конфиг,
-- API входная точка `api_service.main:app`,
-- зависимости в `requirements_api.txt`.
+- точка входа `api_service.main:app`,
+- зависимости: **`requirements.txt`**.
 
-Далее можно добавить `Dockerfile`, `docker-compose.yml` и CI/CD в GitLab.
+Далее: `Dockerfile`, `docker-compose.yml`, CI/CD в GitLab.
 
+## 11) Миграции БД (справочно)
 
-## 8) Миграция БД для `pipeline_runs.pipeline_code`
-
-Чтобы разделять логи пайплайнов 911 и КЦ, добавлен столбец `pipeline_code` в таблицу `pipeline_runs`.
-
-Если БД уже создана, выполните SQL-миграцию:
+`pipeline_code` в `pipeline_runs`:
 
 ```bash
 psql "$DATABASE_URL" -f db/migrations/20260305_add_pipeline_code_to_pipeline_runs.sql
 ```
 
-> Миграция безопасна для существующих данных: столбец добавляется с дефолтом `UNKNOWN` и индексом.
-
-
-Дополнительная миграция (метрики pipeline):
+Метрики pipeline (если ещё не применяли):
 
 ```bash
-psql "$DATABASE_URL" -f db/migrations/20260306_add_active_and_pipeline_metrics.sql
+psql "$DATABASE_URL" -f db/migrations/20260312_add_pipeline_metrics.sql
 ```
+
+Каталог тем и классификации — см. `db/migrations/20260323_add_topic_catalog_and_call_classifications.sql` и при необходимости `20260326_*.sql` в том же каталоге.
