@@ -59,7 +59,8 @@ class Call(Base, TimestampMixin):
         UniqueConstraint("manager_id", "call_type_id", "octell_call_id", name="uq_calls_manager_type_octell"),
         Index("ix_calls_manager_started_at", "manager_id", "call_started_at"),
         Index("ix_calls_started_at", "call_started_at"),
-        Index("ix_calls_status", "status"),
+        Index("ix_calls_status_id", "status_id"),
+        Index("ix_calls_call_type_status_started", "call_type_id", "status_id", "call_started_at"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
