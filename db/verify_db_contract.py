@@ -137,6 +137,7 @@ def check_crud_select_paths(result: CheckResult, rt: dict[str, Any]) -> None:
     select = rt["select"]
     SessionLocal = rt["SessionLocal"]
     Call = rt["Call"]
+    CallStatus = rt["CallStatus"]
     Transcription = rt["Transcription"]
     TopicCatalogEntry = rt["TopicCatalogEntry"]
     CallClassification = rt["CallClassification"]
