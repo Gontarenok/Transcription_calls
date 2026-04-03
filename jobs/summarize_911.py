@@ -14,6 +14,7 @@ from transformers import pipeline
 
 from db.base import SessionLocal
 from db.crud import add_summarization, create_pipeline_run, finish_pipeline_run, get_calls_for_summarization, set_call_status
+from jobs.pipeline_lifecycle import register_active_pipeline, unregister_active_pipeline
 from model_paths import model_settings
 
 
@@ -162,7 +163,7 @@ def summarize_911_batch(self, *, limit: int = 100) -> dict:
                     raw_text=summary.raw_text,
                 )
                 set_call_status(db, call.id, "SUMMARIZED", error_message=None)
-                processed += 1
+                progress["processed"] += 1
             except Exception as exc:
                 set_call_status(db, call.id, "SUMMARIZATION_FAILED", error_message=str(exc))
 
@@ -188,12 +189,13 @@ def summarize_911_batch(self, *, limit: int = 100) -> dict:
             pipeline_run_id=pipeline_run.id,
             status="FAILED",
             finished_at=datetime.now(timezone.utc),
-            processed_calls=int(processed),
+            processed_calls=int(progress["processed"]),
             duration_seconds=int(time.time() - start_ts),
             error_message=str(exc),
         )
         raise
     finally:
+        unregister_active_pipeline(pipeline_run.id)
         db.close()
 
 

@@ -9,6 +9,7 @@ from celery import shared_task
 
 from db.base import SessionLocal
 from db.crud import create_pipeline_run, finish_pipeline_run
+from jobs.pipeline_lifecycle import count_calls_linked_to_pipeline, register_active_pipeline, unregister_active_pipeline
 from process_911_calls_spikers import collect_911_calls_metadata, transcribe_911_calls
 
 
@@ -41,6 +42,7 @@ def transcribe_911_run(
             status="RUNNING",
             pipeline_code=PIPELINE_CODE,
         )
+        register_active_pipeline(run.id, lambda: count_calls_linked_to_pipeline(run.id))
         try:
             collect_911_calls_metadata(db, root_dir=root_dir, recursive=bool(recursive))
             stats = transcribe_911_calls(db, model_size=model, limit=int(limit), pipeline_run_id=run.id)
@@ -68,5 +70,7 @@ def transcribe_911_run(
             )
             raise
         finally:
+            unregister_active_pipeline(run.id)
             db.close()
+
 

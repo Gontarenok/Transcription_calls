@@ -9,6 +9,7 @@ from celery import chord, shared_task
 
 from db.base import SessionLocal
 from db.crud import create_pipeline_run, finish_pipeline_run
+from jobs.pipeline_lifecycle import count_calls_linked_to_pipeline, register_active_pipeline, unregister_active_pipeline
 from process_kc_calls_spikers import collect_kc_calls_metadata, normalize_day_folder, transcribe_kc_calls
 
 
@@ -86,6 +87,11 @@ def transcribe_kc_day(
             pipeline_code=PIPELINE_CODE,
         )
         db.close()
+
+        register_active_pipeline(
+            pipeline_run.id,
+            lambda: count_calls_linked_to_pipeline(pipeline_run.id),
+        )
 
         db2 = SessionLocal()
         try:

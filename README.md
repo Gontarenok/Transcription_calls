@@ -83,6 +83,8 @@ docker compose up -d --build
 
 Ручная постановка в очередь (см. также `scripts/enqueue.py`): вызов `.delay()` на задачах из `jobs/` при работающем брокере и воркерах.
 
+**Логи пайплайнов (`pipeline_runs`):** при остановке воркера (SIGTERM/SIGINT, `docker stop`, Ctrl+C в процессе воркера) активные запуски со статусом `RUNNING` автоматически получают **`INTERRUPTED`**, заполняются **`finished_at`**, **`duration_seconds`**, **`processed_calls`** (по возможности — фактическое число классификаций/саммаризаций или число звонков, привязанных к запуску у транскрибации) и пояснение в **`error_message`**. Жёсткое **`SIGKILL` / kill -9** обработчик не перехватывает — такие записи могут остаться `RUNNING`. Повторный вызов `finish_pipeline_run` для уже завершённой строки не перезаписывает запись. Реализация: `jobs/pipeline_lifecycle.py`, подключение — `app/celery_app.py` (`worker_process_init` / `worker_ready`).
+
 ## 6) Flower: как пользоваться
 
 1. После `docker compose up` откройте **`http://<хост>:5555/`** (порт см. `FLOWER_PORT`, по умолчанию 5555).

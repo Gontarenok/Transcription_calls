@@ -728,6 +728,9 @@ def finish_pipeline_run(
     run = db.get(PipelineRun, pipeline_run_id)
     if not run:
         return None
+    # Уже завершён (в т.ч. по INTERRUPTED из обработчика сигнала) — не перезаписываем
+    if run.finished_at is not None:
+        return run
     run.status = status
     run.finished_at = finished_at
     run.processed_calls = processed_calls

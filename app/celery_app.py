@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 
 from celery import Celery
+from celery.signals import worker_process_init, worker_ready
 
 
 def _bool_env(name: str, default: bool = False) -> bool:
@@ -44,4 +45,20 @@ def make_celery() -> Celery:
 
 
 celery_app = make_celery()
+
+
+@worker_process_init.connect
+def _install_pipeline_shutdown_on_worker_child(**_kwargs: object) -> None:
+    """Prefork: в каждом дочернем процессе — SIGTERM/SIGINT завершают RUNNING-пайплайны статусом INTERRUPTED."""
+    from jobs.pipeline_lifecycle import install_worker_shutdown_handlers
+
+    install_worker_shutdown_handlers()
+
+
+@worker_ready.connect
+def _install_pipeline_shutdown_on_worker_ready(**_kwargs: object) -> None:
+    """Solo/pthreads: один процесс выполнения задач — те же обработчики (идемпотентная установка)."""
+    from jobs.pipeline_lifecycle import install_worker_shutdown_handlers
+
+    install_worker_shutdown_handlers()
 

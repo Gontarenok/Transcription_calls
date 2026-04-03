@@ -20,6 +20,7 @@ from db.crud import (
     get_calls_for_classification,
     set_call_status,
 )
+from jobs.pipeline_lifecycle import register_active_pipeline, unregister_active_pipeline
 from model_paths import model_settings
 from rag.classify_calls_v2 import (
     Candidate,
@@ -67,7 +68,7 @@ def classify_kc_batch(self, *, limit: int = 200, debug_dir: str | None = None) -
     Uses the same logic as rag/classify_calls_v2.py but runs as a Celery job.
     """
     start_ts = time.time()
-    processed = 0
+    progress = {"processed": 0}
     skipped_no_transcription = 0
     skipped_empty_text = 0
 
@@ -78,6 +79,7 @@ def classify_kc_batch(self, *, limit: int = 200, debug_dir: str | None = None) -
         status="RUNNING",
         pipeline_code=PIPELINE_CODE,
     )
+    register_active_pipeline(pipeline_run.id, lambda: int(progress["processed"]))
     run_debug_dir = debug_dir or (_debug_dir_for_run(pipeline_run.id) if os.getenv("CLASSIFY_DEBUG", "").strip() else None)
 
     try:
@@ -135,7 +137,7 @@ def classify_kc_batch(self, *, limit: int = 200, debug_dir: str | None = None) -
                         raw_llm_output=None,
                     )
                     set_call_status(db, call.id, "CLASSIFIED")
-                    processed += 1
+                    progress["processed"] += 1
                     continue
 
                 llm_text = normalize_call_text(raw_text)
@@ -174,7 +176,7 @@ def classify_kc_batch(self, *, limit: int = 200, debug_dir: str | None = None) -
                         raw_llm_output=raw_llm,
                     )
                     set_call_status(db, call.id, "CLASSIFIED")
-                    processed += 1
+                    progress["processed"] += 1
                     continue
 
                 reason = result.get("reason") or (raw_llm.strip()[:500] if raw_llm else None)
@@ -202,7 +204,7 @@ def classify_kc_batch(self, *, limit: int = 200, debug_dir: str | None = None) -
                     raw_llm_output=raw_llm,
                 )
                 set_call_status(db, call.id, "CLASSIFIED")
-                processed += 1
+                progress["processed"] += 1
 
             except Exception as exc:
                 set_call_status(db, call.id, "CLASSIFICATION_FAILED", error_message=str(exc))
@@ -212,14 +214,14 @@ def classify_kc_batch(self, *, limit: int = 200, debug_dir: str | None = None) -
             pipeline_run_id=pipeline_run.id,
             status="SUCCESS",
             finished_at=datetime.now(timezone.utc),
-            processed_calls=int(processed),
+            processed_calls=int(progress["processed"]),
             duration_seconds=int(time.time() - start_ts),
             error_message=None,
         )
         return {
             "status": "ok",
             "pipeline_run_id": pipeline_run.id,
-            "processed": processed,
+            "processed": progress["processed"],
             "skipped_no_transcription": skipped_no_transcription,
             "skipped_empty_text": skipped_empty_text,
             "debug_dir": run_debug_dir,
@@ -230,12 +232,13 @@ def classify_kc_batch(self, *, limit: int = 200, debug_dir: str | None = None) -
             pipeline_run_id=pipeline_run.id,
             status="FAILED",
             finished_at=datetime.now(timezone.utc),
-            processed_calls=int(processed),
+            processed_calls=int(progress["processed"]),
             duration_seconds=int(time.time() - start_ts),
             error_message=str(exc),
         )
         raise
     finally:
+        unregister_active_pipeline(pipeline_run.id)
         db.close()
 
 
