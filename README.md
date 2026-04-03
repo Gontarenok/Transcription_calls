@@ -6,6 +6,8 @@
 2. Установка зависимостей: `pip install -r requirements.txt`
 3. Скопируйте `.env.example` в `.env` и заполните значения.
 
+Если pip пишет про `\x00` в первой строке `requirements.txt` или «Invalid requirement» с пробелами между буквами — файл случайно сохранён как **UTF-16**. Нужна кодировка **UTF-8** (в VS Code / PyCharm: *Reopen with Encoding* / *Save with Encoding* → UTF-8), либо заново взять файл из репозитория.
+
 ## 2) Параметры `.env`
 
 **Обязательные (минимум для API):**
