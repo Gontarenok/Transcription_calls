@@ -284,6 +284,7 @@ def call_to_out(call: Call, include_text: bool) -> CallOut:
         duration_seconds=call.duration_seconds,
         parts_count=safe_parts_count(call),
         transcription=active_trans.text if (active_trans and include_text) else None,
+        has_transcription=active_trans is not None,
         topic=active_class.topic_name if active_class else None,
         subtopic=active_class.subtopic_name if active_class else None,
         classification_confidence=active_class.confidence if active_class else None,
