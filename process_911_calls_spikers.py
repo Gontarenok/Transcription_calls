@@ -202,7 +202,7 @@ def transcribe_911_calls(db, *, model_size: str, limit: int = 10000, pipeline_ru
     calls = get_calls_for_transcription(
         db,
         call_type_code=call_type.code,
-        statuses=("NEW", "FAILED"),
+        statuses=("NEW", "FAILED", "TRANSCRIPTION_FAILED"),
         limit=limit,
     )
     if not calls:
@@ -235,6 +235,7 @@ def transcribe_911_calls(db, *, model_size: str, limit: int = 10000, pipeline_ru
 
             if pipeline_run_id is not None:
                 call.pipeline_run_id = pipeline_run_id
+                db.commit()
 
             add_transcription(
                 db,
@@ -253,7 +254,8 @@ def transcribe_911_calls(db, *, model_size: str, limit: int = 10000, pipeline_ru
         except Exception as exc:
             if pipeline_run_id is not None:
                 call.pipeline_run_id = pipeline_run_id
-            set_call_status(db, call.id, "FAILED", error_message=str(exc))
+                db.commit()
+            set_call_status(db, call.id, "TRANSCRIPTION_FAILED", error_message=str(exc))
             failed += 1
             print(f"❌ Ошибка: {exc}")
 

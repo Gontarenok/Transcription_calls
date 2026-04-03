@@ -1,0 +1,11 @@
+[Unit]
+Description=Enqueue pending KC classification
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/transcription-calls
+EnvironmentFile=/opt/transcription-calls/prod.env
+ExecStart=/usr/bin/docker compose run --rm web python scripts/enqueue.py classify --limit 200
+

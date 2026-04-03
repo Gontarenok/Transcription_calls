@@ -1,0 +1,11 @@
+[Unit]
+Description=Periodic classification enqueuer
+
+[Timer]
+OnCalendar=*:0/10
+Persistent=true
+Unit=transcription-calls-classify.service
+
+[Install]
+WantedBy=timers.target
+

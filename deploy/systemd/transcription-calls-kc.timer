@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily KC pipeline (23:30)
+
+[Timer]
+OnCalendar=*-*-* 23:30:00
+Persistent=true
+Unit=transcription-calls-kc.service
+
+[Install]
+WantedBy=timers.target
+

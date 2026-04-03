@@ -18,14 +18,14 @@
 <div class="wrap">
   <div class="login-card">
     <h2>Transcription Calls</h2>
-    <p>Введите API ключ для доступа.</p>
+    <p>Вход: локальный суперюзер (если задан в .env) или Active Directory.</p>
     {% if error %}<div class="err">{{ error }}</div>{% endif %}
-    <form action="/calls" method="get">
-      <div class="api-wrap">
-        <input id="api_key_global" type="password" name="api_key" value="{{ api_key or '' }}" placeholder="API key" required />
-        <button type="button" class="eye" onclick="toggleKey()">👁</button>
-      </div>
-      <button class="btn" type="submit">Открыть</button>
+    <form action="/login" method="post">
+      <div class="field-label">Логин</div>
+      <input type="text" name="username" placeholder="username" required />
+      <div class="field-label" style="margin-top:10px;">Пароль</div>
+      <input type="password" name="password" placeholder="password" required />
+      <button class="btn" type="submit">Войти</button>
     </form>
   </div>
 </div>

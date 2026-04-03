@@ -50,7 +50,7 @@ def load_runtime_objects(result: CheckResult) -> dict[str, Any] | None:
         from sqlalchemy.orm import configure_mappers
 
         from db.base import SessionLocal, engine
-        from db.models import Base, Call, CallClassification, TopicCatalogEntry, Transcription
+        from db.models import Base, Call, CallClassification, CallStatus, TopicCatalogEntry, Transcription
     except Exception as exc:
         result.errors.append(f"Import/runtime bootstrap failed: {exc}")
         return None
@@ -64,6 +64,7 @@ def load_runtime_objects(result: CheckResult) -> dict[str, Any] | None:
         "Base": Base,
         "Call": Call,
         "CallClassification": CallClassification,
+        "CallStatus": CallStatus,
         "TopicCatalogEntry": TopicCatalogEntry,
         "Transcription": Transcription,
     }
@@ -83,7 +84,7 @@ def check_model_attributes_used_by_crud(result: CheckResult, rt: dict[str, Any])
     CallClassification = rt["CallClassification"]
 
     required_attrs = {
-        "Call": ["call_parts", "transcriptions", "summarizations", "classifications", "parts_count"],
+        "Call": ["call_parts", "transcriptions", "summarizations", "classifications", "parts_count", "status_id", "call_status"],
         "Transcription": ["classifications"],
         "TopicCatalogEntry": ["classifications"],
         "CallClassification": ["call", "transcription", "catalog_entry", "pipeline_run"],
@@ -146,6 +147,7 @@ def check_crud_select_paths(result: CheckResult, rt: dict[str, Any]) -> None:
         _ = list(session.scalars(select(Transcription).limit(1)))
         _ = list(session.scalars(select(TopicCatalogEntry).limit(1)))
         _ = list(session.scalars(select(CallClassification).limit(1)))
+        _ = list(session.scalars(select(CallStatus).limit(1)))
     except Exception as exc:
         result.errors.append(f"CRUD/select smoke failed: {exc}")
     finally:

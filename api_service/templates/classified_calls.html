@@ -11,7 +11,6 @@
   {% if date_error %}<div class="error">{{ date_error }}</div>{% endif %}
 
     <form method="get" action="/classified-calls">
-      <input type="hidden" name="api_key" value="{{ api_key }}" />
       <div class="filters cols-7">
         <div class="field">
           <label>Период</label>
@@ -78,7 +77,7 @@
 
     <div class="actions">
       <div></div>
-      <a class="btn-secondary" href="/api/classified-calls/export.xlsx?api_key={{ api_key }}&period={{ filters.period }}&date_from={{ filters.date_from }}&date_to={{ filters.date_to }}&manager={{ filters.manager }}&topic={{ filters.topic }}&subtopic={{ filters.subtopic }}">Выгрузить в Excel</a>
+      <a class="btn-secondary" href="/classified-calls/export.xlsx?period={{ filters.period }}&date_from={{ filters.date_from }}&date_to={{ filters.date_to }}&manager={{ filters.manager }}&topic={{ filters.topic }}&subtopic={{ filters.subtopic }}">Выгрузить в Excel</a>
     </div>
 
     <div class="table-wrap">
@@ -107,9 +106,9 @@
             <td data-sort-value="{{ (r.subtopic or '')|e }}">{{ r.subtopic or '' }}</td>
             <td data-sort-value="{{ r.classification_confidence if r.classification_confidence is not none else '' }}">{{ '%.2f'|format(r.classification_confidence) if r.classification_confidence is not none else '' }}</td>
             <td data-sort-value="{{ (r.classification_reason or '')|e }}">{{ r.classification_reason or '' }}</td>
-            <td data-sort-value="{% if r.transcription %}{{ r.transcription|length }}{% else %}0{% endif %}">
-              {% if r.transcription %}
-                <details><summary>Показать</summary><div class="transcript">{{ r.transcription }}</div></details>
+            <td data-sort-value="{% if r.has_transcription %}1{% else %}0{% endif %}">
+              {% if r.has_transcription %}
+                <details class="lazy-transcript" data-fetch-url="/ui/calls/{{ r.id }}/active-transcription"><summary>Показать</summary><div class="transcript lazy-transcript-body"></div></details>
               {% endif %}
             </td>
           </tr>

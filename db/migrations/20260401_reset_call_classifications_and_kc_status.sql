@@ -37,6 +37,23 @@ WHERE c.call_type_id = ct.id
 COMMIT;
 
 -- ---------------------------------------------------------------------------
+-- После миграции db/migrations/20260402_call_statuses_normalize.sql колонки calls.status
+-- больше нет. Эквивалент отката КЦ-классификации тогда:
+--
+-- BEGIN;
+-- TRUNCATE TABLE call_classifications RESTART IDENTITY;
+-- UPDATE calls AS c
+-- SET error_message = NULL,
+--     status_id = (SELECT id FROM call_statuses WHERE code = 'TRANSCRIBED')
+-- FROM call_types AS ct
+-- WHERE c.call_type_id = ct.id
+--   AND ct.code IN ('КЦ', 'KЦ', 'KC')
+--   AND c.status_id IN (
+--     SELECT id FROM call_statuses WHERE code IN ('CLASSIFIED', 'CLASSIFICATION_FAILED', 'CLASSIFYING')
+--   );
+-- COMMIT;
+--
+-- ---------------------------------------------------------------------------
 -- OPTIONAL: delete classification pipeline run rows (UI /pipeline-runs history).
 -- Safe after TRUNCATE call_classifications (FK pipeline_run_id on classifications is gone).
 -- Uncomment if you want a clean log for КЦ_CLASSIFICATION only.

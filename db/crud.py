@@ -4,12 +4,13 @@ import json
 from datetime import datetime
 
 from sqlalchemy import func, select
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.orm import Session, load_only, selectinload
 
 from .models import (
     Call,
     CallClassification,
     CallPart,
+    CallStatus,
     CallType,
     PipelineRun,
     Summarization,
@@ -79,6 +80,13 @@ def get_or_create_user(
     db.commit()
     db.refresh(user)
     return user
+
+
+def get_call_status_by_code(db: Session, code: str) -> CallStatus:
+    row = db.scalar(select(CallStatus).where(CallStatus.code == code))
+    if row is None:
+        raise ValueError(f"Unknown call status code: {code!r}")
+    return row
 
 
 def get_or_create_call_type(db: Session, code: str, name: str, description: str | None = None) -> CallType:
@@ -217,7 +225,7 @@ def set_call_status(db: Session, call_id: int, status: str, error_message: str |
     if not call:
         return None
 
-    call.status = status
+    call.status_id = get_call_status_by_code(db, status).id
     call.error_message = error_message
     db.commit()
     db.refresh(call)
@@ -229,19 +237,45 @@ def get_calls_for_transcription(
     *,
     call_type_code: str,
     manager_id: int | None = None,
-    statuses: tuple[str, ...] = ("NEW", "FAILED"),
+    statuses: tuple[str, ...] = ("NEW", "FAILED", "TRANSCRIPTION_FAILED"),
     limit: int = 10000,
 ) -> list[Call]:
     stmt = (
         select(Call)
         .join(CallType, Call.call_type_id == CallType.id)
+        .join(CallStatus, Call.status_id == CallStatus.id)
         .options(selectinload(Call.manager), selectinload(Call.call_type), selectinload(Call.call_parts))
-        .where(CallType.code == call_type_code, Call.status.in_(statuses))
+        .where(CallType.code == call_type_code, CallStatus.code.in_(statuses))
         .order_by(Call.call_started_at.asc())
         .limit(limit)
     )
     if manager_id is not None:
         stmt = stmt.where(Call.manager_id == manager_id)
+    return list(db.scalars(stmt))
+
+
+def get_calls_for_summarization(
+    db: Session,
+    *,
+    call_type_code: str,
+    statuses: tuple[str, ...] = ("TRANSCRIBED", "SUMMARIZATION_FAILED"),
+    limit: int = 200,
+) -> list[Call]:
+    stmt = (
+        select(Call)
+        .join(CallType, Call.call_type_id == CallType.id)
+        .join(CallStatus, Call.status_id == CallStatus.id)
+        .options(
+            selectinload(Call.manager),
+            selectinload(Call.call_type),
+            selectinload(Call.call_parts),
+            selectinload(Call.transcriptions),
+            selectinload(Call.summarizations),
+        )
+        .where(CallType.code == call_type_code, CallStatus.code.in_(statuses))
+        .order_by(Call.call_started_at.asc())
+        .limit(limit)
+    )
     return list(db.scalars(stmt))
 
 
@@ -265,7 +299,7 @@ def get_calls_for_classification(
         .limit(limit)
     )
     if statuses:
-        stmt = stmt.where(Call.status.in_(statuses))
+        stmt = stmt.join(CallStatus, Call.status_id == CallStatus.id).where(CallStatus.code.in_(statuses))
     if call_type_code:
         stmt = stmt.join(CallType, Call.call_type_id == CallType.id).where(CallType.code == call_type_code)
     return list(db.scalars(stmt))
@@ -553,11 +587,12 @@ def _classified_calls_base_stmt(
         select(Call)
         .join(CallType, Call.call_type_id == CallType.id)
         .join(User, Call.manager_id == User.id)
+        .join(CallStatus, Call.status_id == CallStatus.id)
         .join(
             CallClassification,
             (CallClassification.call_id == Call.id) & (CallClassification.is_active.is_(True)),
         )
-        .where(CallType.code.in_(role_call_types), Call.status == "CLASSIFIED")
+        .where(CallType.code.in_(role_call_types), CallStatus.code == "CLASSIFIED")
     )
     if date_from:
         stmt = stmt.where(Call.call_started_at >= date_from)
@@ -592,7 +627,8 @@ def count_calls_with_active_classification(
             CallClassification,
             (CallClassification.call_id == Call.id) & (CallClassification.is_active.is_(True)),
         )
-        .where(CallType.code.in_(role_call_types), Call.status == "CLASSIFIED")
+        .join(CallStatus, Call.status_id == CallStatus.id)
+        .where(CallType.code.in_(role_call_types), CallStatus.code == "CLASSIFIED")
     )
     if date_from:
         stmt = stmt.where(Call.call_started_at >= date_from)
@@ -618,6 +654,7 @@ def list_calls_with_active_classification(
     manager: str | None = None,
     topic: str | None = None,
     subtopic: str | None = None,
+    load_transcription_text: bool = False,
 ) -> list[Call]:
     stmt = _classified_calls_base_stmt(
         role_call_types=role_call_types,
@@ -627,14 +664,39 @@ def list_calls_with_active_classification(
         topic=topic,
         subtopic=subtopic,
     )
-    stmt = (
-        stmt.options(
+    if load_transcription_text:
+        load_opts = (
             selectinload(Call.call_type),
             selectinload(Call.manager),
             selectinload(Call.call_parts),
+            selectinload(Call.call_status),
             selectinload(Call.transcriptions),
             selectinload(Call.classifications).selectinload(CallClassification.catalog_entry),
         )
+    else:
+        load_opts = (
+            selectinload(Call.call_type),
+            selectinload(Call.manager),
+            selectinload(Call.call_parts),
+            selectinload(Call.call_status),
+            selectinload(Call.transcriptions).load_only(
+                Transcription.id,
+                Transcription.call_id,
+                Transcription.is_active,
+                Transcription.model_name,
+            ),
+            selectinload(Call.classifications).load_only(
+                CallClassification.id,
+                CallClassification.call_id,
+                CallClassification.is_active,
+                CallClassification.topic_name,
+                CallClassification.subtopic_name,
+                CallClassification.confidence,
+                CallClassification.reasoning,
+            ),
+        )
+    stmt = (
+        stmt.options(*load_opts)
         .order_by(Call.call_started_at.desc())
         .offset(max(0, offset))
         .limit(limit)
@@ -660,6 +722,8 @@ def finish_pipeline_run(
     processed_calls: int,
     duration_seconds: int | None,
     error_message: str | None = None,
+    total_audio_seconds: float | None = None,
+    avg_rtf: float | None = None,
 ) -> PipelineRun | None:
     run = db.get(PipelineRun, pipeline_run_id)
     if not run:
@@ -669,6 +733,10 @@ def finish_pipeline_run(
     run.processed_calls = processed_calls
     run.duration_seconds = duration_seconds
     run.error_message = error_message
+    if total_audio_seconds is not None and hasattr(run, "total_audio_seconds"):
+        run.total_audio_seconds = total_audio_seconds
+    if avg_rtf is not None and hasattr(run, "avg_rtf"):
+        run.avg_rtf = avg_rtf
     db.commit()
     db.refresh(run)
     return run

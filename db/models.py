@@ -40,6 +40,18 @@ class CallType(Base, TimestampMixin):
     calls: Mapped[list["Call"]] = relationship(back_populates="call_type", lazy="selectin")
 
 
+class CallStatus(Base, TimestampMixin):
+    """Справочник статусов звонка (нормализация; расширение модели — новыми строками здесь)."""
+
+    __tablename__ = "call_statuses"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    code: Mapped[str] = mapped_column(String(30), unique=True, nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+
+    calls: Mapped[list["Call"]] = relationship(back_populates="call_status", lazy="selectin")
+
+
 class Call(Base, TimestampMixin):
     __tablename__ = "calls"
 
@@ -63,7 +75,7 @@ class Call(Base, TimestampMixin):
     call_started_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), nullable=False)
     parts_count: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
 
-    status: Mapped[str] = mapped_column(String(30), default="NEW", nullable=False)
+    status_id: Mapped[int] = mapped_column(ForeignKey("call_statuses.id"), nullable=False)
     duration_seconds: Mapped[float | None] = mapped_column(Float)
     error_message: Mapped[str | None] = mapped_column(Text)
 
@@ -73,6 +85,7 @@ class Call(Base, TimestampMixin):
 
     manager: Mapped["User"] = relationship(back_populates="calls", lazy="selectin")
     call_type: Mapped["CallType"] = relationship(back_populates="calls", lazy="selectin")
+    call_status: Mapped["CallStatus"] = relationship(back_populates="calls", lazy="selectin")
     pipeline_run: Mapped["PipelineRun"] = relationship(back_populates="calls", lazy="selectin")
 
     call_parts: Mapped[list["CallPart"]] = relationship(

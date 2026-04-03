@@ -1,0 +1,11 @@
+[Unit]
+Description=Periodic 911 summarization enqueuer
+
+[Timer]
+OnCalendar=*:0/15
+Persistent=true
+Unit=transcription-calls-summarize911.service
+
+[Install]
+WantedBy=timers.target
+

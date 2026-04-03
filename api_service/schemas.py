@@ -15,6 +15,7 @@ class CallOut(BaseModel):
     duration_seconds: float | None
     parts_count: int
     transcription: str | None = None
+    has_transcription: bool = False
     topic: str | None = None
     subtopic: str | None = None
     classification_confidence: float | None = None

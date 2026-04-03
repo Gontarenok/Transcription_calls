@@ -243,7 +243,7 @@ def transcribe_kc_calls(db, *, model_size: str, manager_folder: str | None = Non
         db,
         call_type_code=call_type.code,
         manager_id=manager_id,
-        statuses=("NEW", "FAILED"),
+        statuses=("NEW", "FAILED", "TRANSCRIPTION_FAILED"),
         limit=limit,
     )
     if not calls:
@@ -281,6 +281,7 @@ def transcribe_kc_calls(db, *, model_size: str, manager_folder: str | None = Non
 
             if pipeline_run_id is not None:
                 call.pipeline_run_id = pipeline_run_id
+                db.commit()
 
             add_transcription(
                 db,
@@ -299,7 +300,8 @@ def transcribe_kc_calls(db, *, model_size: str, manager_folder: str | None = Non
         except Exception as exc:
             if pipeline_run_id is not None:
                 call.pipeline_run_id = pipeline_run_id
-            set_call_status(db, call.id, "FAILED", error_message=str(exc))
+                db.commit()
+            set_call_status(db, call.id, "TRANSCRIPTION_FAILED", error_message=str(exc))
             failed += 1
             print(f"❌ Ошибка: {exc}")
 

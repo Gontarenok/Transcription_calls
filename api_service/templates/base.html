@@ -189,7 +189,7 @@
 {% if show_header %}
   <div class="app-header">
     <div class="header-inner">
-      <a class="brand" href="/calls?api_key={{ api_key or '' }}">
+      <a class="brand" href="/calls">
         <div class="logo">TC</div>
         <div class="brand-title">
           <strong>Transcription Calls</strong>
@@ -198,28 +198,25 @@
       </a>
 
       <nav class="nav">
-        <a class="{% if active_page=='calls' %}active{% endif %}" href="/calls?api_key={{ api_key or '' }}">Звонки</a>
+        <a class="{% if active_page=='calls' %}active{% endif %}" href="/calls">Звонки</a>
         {% if can_see_classification %}
-          <a class="{% if active_page=='classified_calls' %}active{% endif %}" href="/classified-calls?api_key={{ api_key or '' }}">Классификация</a>
+          <a class="{% if active_page=='classified_calls' %}active{% endif %}" href="/classified-calls">Классификация</a>
         {% endif %}
-        <a class="{% if active_page=='users' %}active{% endif %}" href="/users?api_key={{ api_key or '' }}">Пользователи</a>
+        <a class="{% if active_page=='users' %}active{% endif %}" href="/users">Пользователи</a>
         {% if role == 'ADMIN' %}
           <div class="dropdown">
             <button type="button" class="dropbtn">Администрирование</button>
             <div class="dropdown-content">
-              <a class="{% if active_page=='catalog' %}active{% endif %}" href="/catalog?api_key={{ api_key or '' }}">Справочник</a>
-              <a class="{% if active_page=='pipeline_runs' %}active{% endif %}" href="/pipeline-runs?api_key={{ api_key or '' }}">Логи пайплайнов</a>
+              <a class="{% if active_page=='catalog' %}active{% endif %}" href="/catalog">Справочник</a>
+              <a class="{% if active_page=='pipeline_runs' %}active{% endif %}" href="/pipeline-runs">Логи пайплайнов</a>
             </div>
           </div>
         {% endif %}
+        <a href="/logout">Выход</a>
       </nav>
 
       <div class="header-right">
         <div class="role">Роль: {{ role or '—' }}</div>
-        <div class="api-wrap">
-          <input id="api_key_global" type="password" value="{{ api_key or '' }}" placeholder="API key" />
-          <button type="button" class="eye" onclick="toggleKey()">👁</button>
-        </div>
       </div>
     </div>
   </div>
@@ -230,23 +227,6 @@
 </div>
 
 <script>
-  function toggleKey() {
-    const el = document.getElementById('api_key_global');
-    if (!el) return;
-    el.type = el.type === 'password' ? 'text' : 'password';
-  }
-  // Sync global API key into any hidden inputs on page.
-  (function () {
-    const globalKey = document.getElementById('api_key_global');
-    if (!globalKey) return;
-    const sync = () => {
-      const inputs = document.querySelectorAll('input[name="api_key"]');
-      inputs.forEach((i) => { i.value = globalKey.value; });
-      // update menu links without reload is out of scope; server renders links from api_key query.
-    };
-    globalKey.addEventListener('input', sync);
-    sync();
-  })();
 
   /** Client-side table sort: no server round-trips. One active column; switching column resets sort. */
   (function initSortableTables() {
@@ -342,6 +322,44 @@
       });
     });
   })();
+
+  /** Подгрузка текста транскрипции при раскрытии «Показать» (страницы списков не тащат TEXT в общем запросе). */
+  document.addEventListener(
+    'toggle',
+    async function (ev) {
+      const el = ev.target;
+      if (!(el instanceof HTMLDetailsElement) || !el.classList.contains('lazy-transcript')) return;
+      if (!el.open) return;
+      const body = el.querySelector('.lazy-transcript-body');
+      if (!body || el.dataset.loaded === '1') return;
+      const url = el.getAttribute('data-fetch-url');
+      if (!url) return;
+      if (body.dataset.state === 'loading') return;
+      body.dataset.state = 'loading';
+      body.textContent = 'Загрузка…';
+      try {
+        const res = await fetch(url, { credentials: 'same-origin' });
+        let data = {};
+        try {
+          data = await res.json();
+        } catch (_) {
+          data = {};
+        }
+        if (!res.ok) {
+          body.textContent = res.status === 403 ? 'Нет доступа' : 'Ошибка загрузки';
+          body.dataset.state = '';
+          return;
+        }
+        body.textContent = data.text != null ? data.text : '';
+        el.dataset.loaded = '1';
+        body.dataset.state = '';
+      } catch (_) {
+        body.textContent = 'Ошибка загрузки';
+        body.dataset.state = '';
+      }
+    },
+    true,
+  );
 </script>
 {% block extra_js %}{% endblock %}
 
