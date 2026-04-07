@@ -148,6 +148,7 @@ def create_or_get_call(
     if existing:
         return existing
 
+    status_row = get_call_status_by_code(db, status)
     call = Call(
         manager_id=manager_id,
         call_type_id=call_type_id,
@@ -157,7 +158,7 @@ def create_or_get_call(
         octell_call_id=octell_value,
         parts_count=1,
         duration_seconds=duration_seconds,
-        status=status,
+        status_id=status_row.id,
     )
     db.add(call)
     db.commit()

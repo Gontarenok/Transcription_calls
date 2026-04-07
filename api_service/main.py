@@ -18,10 +18,12 @@ from api_service.auth import (
     ROLE_911,
     ROLE_ADMIN,
     ROLE_KC,
+    UiIdentity,
     allowed_call_types_for_role,
     get_current_role,
     get_current_identity_ui,
-    get_current_role_ui,
+    identity_sees_kc_classification,
+    menu_context,
     ui_login_authenticate,
 )
 from api_service.schemas import CallOut, CallsResponse, PipelineRunOut, PipelineRunsResponse, TopicCatalogEntriesResponse, TopicCatalogEntryOut, UserOut, UsersResponse
@@ -194,7 +196,7 @@ def choose_date_range(period: str | None, date_from: str | None, date_to: str | 
 
 def build_calls_query(
     *,
-    role: str,
+    call_types: set[str],
     date_from: datetime | None,
     date_to: datetime | None,
     manager: str | None,
@@ -203,7 +205,7 @@ def build_calls_query(
     transcription_detail: str = "none",
 ):
     """transcription_detail: 'none' — не грузить text (списки UI); 'full' — поле text для экспорта/API."""
-    allowed = allowed_call_types_for_role(role)
+    allowed = set(call_types)
     trans_opt = selectinload(Call.transcriptions)
     if transcription_detail != "full":
         trans_opt = trans_opt.load_only(
@@ -257,6 +259,16 @@ def users_department_for_role(role: str) -> str | None:
     return None
 
 
+def users_department_for_identity(identity: UiIdentity) -> str | None:
+    has_kc = "КЦ" in identity.call_types
+    has_911 = "911" in identity.call_types
+    if has_kc and not has_911:
+        return "Contact Center"
+    if has_911 and not has_kc:
+        return "911"
+    return None
+
+
 def get_active_transcription(call: Call):
     return next((t for t in call.transcriptions if t.is_active), None)
 
@@ -292,12 +304,25 @@ def call_to_out(call: Call, include_text: bool) -> CallOut:
     )
 
 
-def menu_context(role: str, active: str) -> dict:
-    return {"role": role, "active": active}
-
-
 @app.get("/", response_class=HTMLResponse)
 def login_page(request: Request, error: str | None = Query(default=None)):
+    if settings.ui_auth_mode == "trusted_headers":
+        try:
+            get_current_identity_ui(request)
+            return RedirectResponse(url="/calls", status_code=302)
+        except HTTPException:
+            pass
+        return templates.TemplateResponse(
+            "login.html",
+            {
+                "request": request,
+                "show_header": False,
+                "active_page": "login",
+                "error": error or "Вход выполняется через корпоративный портал (нет заголовков доступа).",
+                "trusted_auth": True,
+            },
+            status_code=403,
+        )
     return templates.TemplateResponse(
         "login.html",
         {
@@ -305,6 +330,7 @@ def login_page(request: Request, error: str | None = Query(default=None)):
             "show_header": False,
             "active_page": "login",
             "error": error,
+            "trusted_auth": False,
         },
     )
 
@@ -337,9 +363,9 @@ def logout(request: Request):
 
 
 @app.get("/ui/calls/{call_id}/active-transcription")
-def ui_call_active_transcription(call_id: int, role: str = Depends(get_current_role_ui)):
+def ui_call_active_transcription(call_id: int, identity: UiIdentity = Depends(get_current_identity_ui)):
     """Текст активной транскрипции одним запросом (списки UI не грузят TEXT в общем select)."""
-    allowed = allowed_call_types_for_role(role)
+    allowed = identity.call_types
     db = SessionLocal()
     try:
         call_type_code = db.scalar(
@@ -360,7 +386,7 @@ def ui_call_active_transcription(call_id: int, role: str = Depends(get_current_r
 @app.get("/calls", response_class=HTMLResponse)
 def calls_ui(
     request: Request,
-    role: str = Depends(get_current_role_ui),
+    identity: UiIdentity = Depends(get_current_identity_ui),
     period: str | None = Query(default=None),
     date_from: str | None = Query(default=None),
     date_to: str | None = Query(default=None),
@@ -369,13 +395,14 @@ def calls_ui(
     call_type: str | None = Query(default=None),
     offset: int = Query(default=0, ge=0),
 ):
+    role = identity.role
     final_from, final_to, date_error = choose_date_range(period, date_from, date_to)
 
     db = SessionLocal()
     try:
         page_size = _UI_PAGE_SIZE
         query = build_calls_query(
-            role=role,
+            call_types=identity.call_types,
             date_from=final_from,
             date_to=final_to,
             manager=manager,
@@ -410,7 +437,7 @@ def calls_ui(
             select(User.full_name)
             .join(Call, Call.manager_id == User.id)
             .join(CallType, Call.call_type_id == CallType.id)
-            .where(CallType.code.in_(allowed_call_types_for_role(role)), User.full_name.is_not(None))
+            .where(CallType.code.in_(identity.call_types), User.full_name.is_not(None))
             .distinct()
             .order_by(User.full_name.asc())
         )
@@ -424,11 +451,13 @@ def calls_ui(
                 "role": role,
                 "show_header": True,
                 "active_page": "calls",
-                "can_see_classification": bool(role in {ROLE_KC, ROLE_ADMIN}),
+                "can_see_classification": identity_sees_kc_classification(identity),
+                "catalog_access": identity.catalog_access,
+                "pipeline_admin": identity.pipeline_admin,
                 "managers": managers,
                 "status_options": STATUS_OPTIONS,
                 "date_error": date_error,
-                "menu": menu_context(role, "calls"),
+                "menu": menu_context("calls", identity),
                 "filters": {
                     "period": period or "",
                     "date_from": date_from or "",
@@ -449,7 +478,7 @@ def calls_ui(
 @app.get("/classified-calls", response_class=HTMLResponse)
 def classified_calls_ui(
     request: Request,
-    role: str = Depends(get_current_role_ui),
+    identity: UiIdentity = Depends(get_current_identity_ui),
     period: str | None = Query(default=None),
     date_from: str | None = Query(default=None),
     date_to: str | None = Query(default=None),
@@ -458,14 +487,15 @@ def classified_calls_ui(
     subtopic: str | None = Query(default=None),
     offset: int = Query(default=0, ge=0),
 ):
-    if role not in {ROLE_KC, ROLE_ADMIN}:
-        raise HTTPException(status_code=403, detail="Доступно только для КЦ или ADMIN")
+    role = identity.role
+    if "КЦ" not in identity.call_types:
+        raise HTTPException(status_code=403, detail="Нет доступа к классификации КЦ")
 
     final_from, final_to, date_error = choose_date_range(period, date_from, date_to)
     db = SessionLocal()
     try:
         page_size = _UI_PAGE_SIZE
-        role_types = allowed_call_types_for_role(role)
+        role_types = identity.call_types & {"КЦ"}
         total = count_calls_with_active_classification(
             db,
             role_call_types=role_types,
@@ -524,7 +554,7 @@ def classified_calls_ui(
             .join(CallClassification, (CallClassification.call_id == Call.id) & (CallClassification.is_active.is_(True)))
             .where(
                 CallStatus.code == "CLASSIFIED",
-                CallType.code.in_(allowed_call_types_for_role(role)),
+                CallType.code.in_(role_types),
             )
         )
         if final_from:
@@ -546,8 +576,10 @@ def classified_calls_ui(
                 "show_header": True,
                 "active_page": "classified_calls",
                 "can_see_classification": True,
+                "catalog_access": identity.catalog_access,
+                "pipeline_admin": identity.pipeline_admin,
                 "date_error": date_error,
-                "menu": menu_context(role, "classified_calls"),
+                "menu": menu_context("classified_calls", identity),
                 "filters": {
                     "period": period or "",
                     "date_from": date_from or "",
@@ -569,12 +601,12 @@ def classified_calls_ui(
 
 
 @app.get("/users", response_class=HTMLResponse)
-def users_ui(request: Request, role: str = Depends(get_current_role_ui), limit: int = Query(default=1000, ge=1, le=5000)):
-
+def users_ui(request: Request, identity: UiIdentity = Depends(get_current_identity_ui), limit: int = Query(default=1000, ge=1, le=5000)):
+    role = identity.role
     db = SessionLocal()
     try:
         query = select(User).order_by(User.full_name.asc(), User.id.asc())
-        dept = users_department_for_role(role)
+        dept = users_department_for_identity(identity)
         if dept:
             query = query.where(User.department == dept)
         rows = list(db.scalars(query.limit(limit)))
@@ -586,8 +618,10 @@ def users_ui(request: Request, role: str = Depends(get_current_role_ui), limit: 
                 "role": role,
                 "show_header": True,
                 "active_page": "users",
-                "can_see_classification": bool(role in {ROLE_KC, ROLE_ADMIN}),
-                "menu": menu_context(role, "users"),
+                "can_see_classification": identity_sees_kc_classification(identity),
+                "catalog_access": identity.catalog_access,
+                "pipeline_admin": identity.pipeline_admin,
+                "menu": menu_context("users", identity),
             },
         )
     finally:
@@ -595,10 +629,11 @@ def users_ui(request: Request, role: str = Depends(get_current_role_ui), limit: 
 
 
 @app.get("/pipeline-runs", response_class=HTMLResponse)
-def pipeline_runs_ui(request: Request, role: str = Depends(get_current_role_ui), limit: int = Query(default=500, ge=1, le=2000)):
-    if role != ROLE_ADMIN:
-        raise HTTPException(status_code=403, detail="Доступно только ADMIN")
+def pipeline_runs_ui(request: Request, identity: UiIdentity = Depends(get_current_identity_ui), limit: int = Query(default=500, ge=1, le=2000)):
+    if not identity.pipeline_admin:
+        raise HTTPException(status_code=403, detail="Доступно только администраторам пайплайна")
 
+    role = identity.role
     db = SessionLocal()
     try:
         runs = list(db.scalars(select(PipelineRun).order_by(PipelineRun.started_at.desc()).limit(limit)))
@@ -610,8 +645,10 @@ def pipeline_runs_ui(request: Request, role: str = Depends(get_current_role_ui),
                 "role": role,
                 "show_header": True,
                 "active_page": "pipeline_runs",
-                "can_see_classification": True,
-                "menu": menu_context(role, "pipeline_runs"),
+                "can_see_classification": identity_sees_kc_classification(identity),
+                "catalog_access": identity.catalog_access,
+                "pipeline_admin": identity.pipeline_admin,
+                "menu": menu_context("pipeline_runs", identity),
             },
         )
     finally:
@@ -619,10 +656,11 @@ def pipeline_runs_ui(request: Request, role: str = Depends(get_current_role_ui),
 
 
 @app.get("/catalog", response_class=HTMLResponse)
-def topic_catalog_ui(request: Request, role: str = Depends(get_current_role_ui), include_inactive: bool = Query(default=True)):
-    if role != ROLE_ADMIN:
-        raise HTTPException(status_code=403, detail="Доступно только ADMIN")
+def topic_catalog_ui(request: Request, identity: UiIdentity = Depends(get_current_identity_ui), include_inactive: bool = Query(default=True)):
+    if not identity.catalog_access:
+        raise HTTPException(status_code=403, detail="Нет доступа к справочнику")
 
+    role = identity.role
     db = SessionLocal()
     try:
         rows = list_topic_catalog_entries(db, include_inactive=include_inactive)
@@ -634,9 +672,11 @@ def topic_catalog_ui(request: Request, role: str = Depends(get_current_role_ui),
                 "role": role,
                 "show_header": True,
                 "active_page": "catalog",
-                "can_see_classification": True,
+                "can_see_classification": identity_sees_kc_classification(identity),
+                "catalog_access": identity.catalog_access,
+                "pipeline_admin": identity.pipeline_admin,
                 "include_inactive": include_inactive,
-                "menu": menu_context(role, "catalog"),
+                "menu": menu_context("catalog", identity),
             },
         )
     finally:
@@ -653,10 +693,10 @@ def save_catalog_entry(
     synonyms_text: str | None = Form(default=None),
     negative_keywords_text: str | None = Form(default=None),
     is_active: str | None = Form(default="true"),
-    role: str = Depends(get_current_role_ui),
+    identity: UiIdentity = Depends(get_current_identity_ui),
 ):
-    if role != ROLE_ADMIN:
-        raise HTTPException(status_code=403, detail="Доступно только ADMIN")
+    if not identity.catalog_access:
+        raise HTTPException(status_code=403, detail="Нет доступа к справочнику")
 
     topic_name = topic_name.strip()
     subtopic_name = subtopic_name.strip()
@@ -712,16 +752,16 @@ def save_catalog_entry(
     return RedirectResponse(url="/catalog", status_code=303)
 
 
-@app.get("/api/calls/export.xlsx")
-def export_calls_excel(
-    role: str = Depends(get_current_role),
-    period: str | None = Query(default=None),
-    date_from: str | None = Query(default=None),
-    date_to: str | None = Query(default=None),
-    manager: str | None = Query(default=None),
-    status: str | None = Query(default=None),
-    call_type: str | None = Query(default=None),
-):
+def _export_calls_excel_response(
+    *,
+    call_types: set[str],
+    period: str | None,
+    date_from: str | None,
+    date_to: str | None,
+    manager: str | None,
+    status: str | None,
+    call_type: str | None,
+) -> StreamingResponse:
     final_from, final_to, date_error = choose_date_range(period, date_from, date_to)
     if date_error:
         raise HTTPException(status_code=400, detail=date_error)
@@ -729,7 +769,7 @@ def export_calls_excel(
     db = SessionLocal()
     try:
         query = build_calls_query(
-            role=role,
+            call_types=call_types,
             date_from=final_from,
             date_to=final_to,
             manager=manager,
@@ -773,9 +813,9 @@ def export_calls_excel(
         db.close()
 
 
-@app.get("/calls/export.xlsx")
-def export_calls_excel_ui(
-    role: str = Depends(get_current_role_ui),
+@app.get("/api/calls/export.xlsx")
+def export_calls_excel(
+    role: str = Depends(get_current_role),
     period: str | None = Query(default=None),
     date_from: str | None = Query(default=None),
     date_to: str | None = Query(default=None),
@@ -783,8 +823,8 @@ def export_calls_excel_ui(
     status: str | None = Query(default=None),
     call_type: str | None = Query(default=None),
 ):
-    return export_calls_excel(
-        role=role,
+    return _export_calls_excel_response(
+        call_types=allowed_call_types_for_role(role),
         period=period,
         date_from=date_from,
         date_to=date_to,
@@ -794,18 +834,40 @@ def export_calls_excel_ui(
     )
 
 
-@app.get("/api/classified-calls/export.xlsx")
-def export_classified_calls_excel(
-    role: str = Depends(get_current_role),
+@app.get("/calls/export.xlsx")
+def export_calls_excel_ui(
+    identity: UiIdentity = Depends(get_current_identity_ui),
     period: str | None = Query(default=None),
     date_from: str | None = Query(default=None),
     date_to: str | None = Query(default=None),
     manager: str | None = Query(default=None),
-    topic: str | None = Query(default=None),
-    subtopic: str | None = Query(default=None),
+    status: str | None = Query(default=None),
+    call_type: str | None = Query(default=None),
 ):
-    if role not in {ROLE_KC, ROLE_ADMIN}:
-        raise HTTPException(status_code=403, detail="Доступно только КЦ или ADMIN")
+    """Экспорт UI: типы звонков из сессии/заголовков (в т.ч. одновременно 911 и КЦ)."""
+    return _export_calls_excel_response(
+        call_types=identity.call_types,
+        period=period,
+        date_from=date_from,
+        date_to=date_to,
+        manager=manager,
+        status=status,
+        call_type=call_type,
+    )
+
+
+def _export_classified_calls_excel_response(
+    *,
+    kc_call_types: set[str],
+    period: str | None,
+    date_from: str | None,
+    date_to: str | None,
+    manager: str | None,
+    topic: str | None,
+    subtopic: str | None,
+) -> StreamingResponse:
+    if not kc_call_types:
+        raise HTTPException(status_code=403, detail="Нет доступа к классификации КЦ")
 
     final_from, final_to, date_error = choose_date_range(period, date_from, date_to)
     if date_error:
@@ -813,10 +875,9 @@ def export_classified_calls_excel(
 
     db = SessionLocal()
     try:
-        # Экспортируем все строки по фильтрам (ограничение для стабильности достаточно большое)
         calls = list_calls_with_active_classification(
             db,
-            role_call_types=allowed_call_types_for_role(role),
+            role_call_types=kc_call_types,
             limit=200000,
             date_from=final_from,
             date_to=final_to,
@@ -860,9 +921,9 @@ def export_classified_calls_excel(
         db.close()
 
 
-@app.get("/classified-calls/export.xlsx")
-def export_classified_calls_excel_ui(
-    role: str = Depends(get_current_role_ui),
+@app.get("/api/classified-calls/export.xlsx")
+def export_classified_calls_excel(
+    role: str = Depends(get_current_role),
     period: str | None = Query(default=None),
     date_from: str | None = Query(default=None),
     date_to: str | None = Query(default=None),
@@ -870,8 +931,31 @@ def export_classified_calls_excel_ui(
     topic: str | None = Query(default=None),
     subtopic: str | None = Query(default=None),
 ):
-    return export_classified_calls_excel(
-        role=role,
+    kc_scope = allowed_call_types_for_role(role) & {"КЦ"}
+    return _export_classified_calls_excel_response(
+        kc_call_types=kc_scope,
+        period=period,
+        date_from=date_from,
+        date_to=date_to,
+        manager=manager,
+        topic=topic,
+        subtopic=subtopic,
+    )
+
+
+@app.get("/classified-calls/export.xlsx")
+def export_classified_calls_excel_ui(
+    identity: UiIdentity = Depends(get_current_identity_ui),
+    period: str | None = Query(default=None),
+    date_from: str | None = Query(default=None),
+    date_to: str | None = Query(default=None),
+    manager: str | None = Query(default=None),
+    topic: str | None = Query(default=None),
+    subtopic: str | None = Query(default=None),
+):
+    kc_scope = identity.call_types & {"КЦ"}
+    return _export_classified_calls_excel_response(
+        kc_call_types=kc_scope,
         period=period,
         date_from=date_from,
         date_to=date_to,
@@ -902,7 +986,7 @@ def calls_api(
     try:
         t_detail = "full" if include_text else "none"
         query = build_calls_query(
-            role=role,
+            call_types=allowed_call_types_for_role(role),
             date_from=final_from,
             date_to=final_to,
             manager=manager,

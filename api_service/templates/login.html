@@ -31,15 +31,20 @@
 <div class="wrap">
   <div class="login-card">
     <h2>Transcription Calls</h2>
-    <p>Вход: локальный суперюзер (если задан в .env) или Active Directory.</p>
-    {% if error %}<div class="err">{{ error }}</div>{% endif %}
-    <form action="/login" method="post">
-      <div class="field-label">Логин</div>
-      <input type="text" name="username" placeholder="username" required />
-      <div class="field-label" style="margin-top:10px;">Пароль</div>
-      <input type="password" name="password" placeholder="password" required />
-      <button class="btn" type="submit">Войти</button>
-    </form>
+    {% if trusted_auth %}
+      <p>Доступ оформляется на веб-сервере (SSO / заголовки). Обратитесь к администратору, если вы видите эту страницу.</p>
+      {% if error %}<div class="err">{{ error }}</div>{% endif %}
+    {% else %}
+      <p>Вход: локальный суперюзер (если задан в .env) или Active Directory.</p>
+      {% if error %}<div class="err">{{ error }}</div>{% endif %}
+      <form action="/login" method="post">
+        <div class="field-label">Логин</div>
+        <input type="text" name="username" placeholder="username" required />
+        <div class="field-label" style="margin-top:10px;">Пароль</div>
+        <input type="password" name="password" placeholder="password" required />
+        <button class="btn" type="submit">Войти</button>
+      </form>
+    {% endif %}
   </div>
 </div>
 {% endblock %}

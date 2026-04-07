@@ -203,14 +203,11 @@
           <a class="{% if active_page=='classified_calls' %}active{% endif %}" href="/classified-calls">Классификация</a>
         {% endif %}
         <a class="{% if active_page=='users' %}active{% endif %}" href="/users">Пользователи</a>
-        {% if role == 'ADMIN' %}
-          <div class="dropdown">
-            <button type="button" class="dropbtn">Администрирование</button>
-            <div class="dropdown-content">
-              <a class="{% if active_page=='catalog' %}active{% endif %}" href="/catalog">Справочник</a>
-              <a class="{% if active_page=='pipeline_runs' %}active{% endif %}" href="/pipeline-runs">Логи пайплайнов</a>
-            </div>
-          </div>
+        {% if catalog_access|default(false) %}
+          <a class="{% if active_page=='catalog' %}active{% endif %}" href="/catalog">Справочник</a>
+        {% endif %}
+        {% if pipeline_admin|default(false) %}
+          <a class="{% if active_page=='pipeline_runs' %}active{% endif %}" href="/pipeline-runs">Логи пайплайнов</a>
         {% endif %}
         <a href="/logout">Выход</a>
       </nav>

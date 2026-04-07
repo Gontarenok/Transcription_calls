@@ -21,8 +21,37 @@ class Settings:
     # Backward-compat: коллекция может называться QDRANT_COLLECTION_NAME
     qdrant_collection_topics: str = os.getenv("QDRANT_COLLECTION_TOPICS", "") or os.getenv("QDRANT_COLLECTION_NAME", "topics_spravochnik")
 
-    # UI session (LDAP login)
+    # UI session (форма входа LDAP / суперпользователь; в режиме trusted_headers почти не используется)
     session_secret: str = os.getenv("SESSION_SECRET", "change_me_in_prod")
+
+    # UI: ldap | trusted_headers (заголовки от reverse-proxy после OAuth2/AD на стороне nginx/IIS)
+    ui_auth_mode: str = (os.getenv("UI_AUTH_MODE", "ldap") or "ldap").strip().lower()
+
+    # Доверенные заголовки (только за reverse-proxy, срез внешних X-Forwarded-* на границе)
+    trusted_header_login: str = os.getenv("TRUSTED_HEADER_LOGIN", "X-Forwarded-Login")
+    trusted_header_roles: str = os.getenv("TRUSTED_HEADER_ROLES", "X-Forwarded-Roles")
+    trusted_header_groups: str = os.getenv("TRUSTED_HEADER_GROUPS", "X-Forwarded-Groups")
+    trusted_prefer_roles_header: bool = (
+        os.getenv("TRUSTED_PREFER_ROLES_HEADER", "1").strip().lower() in {"1", "true", "yes", "on"}
+    )
+
+    # Сопоставление заголовка ролей (список через запятую от прокси), регистр игнорируется
+    trusted_role_admin: str = os.getenv("TRUSTED_ROLE_ADMIN", "admin")
+    trusted_role_kc: str = os.getenv("TRUSTED_ROLE_KC", "kc_cc")
+    trusted_role_kc_catalog: str = os.getenv("TRUSTED_ROLE_KC_CATALOG", "kc_catalog")
+    trusted_role_911: str = os.getenv("TRUSTED_ROLE_911", "911")
+
+    # Сопоставление групп AD по подстроке в значении заголовка (прокси может отдавать CN или короткое имя)
+    trusted_group_admin: str = os.getenv(
+        "TRUSTED_GROUP_ADMIN",
+        "AG-AI calls-Administrators",
+    )
+    trusted_group_kc: str = os.getenv("TRUSTED_GROUP_KC", "FG-AI calls CC-Users")
+    trusted_group_kc_catalog: str = os.getenv(
+        "TRUSTED_GROUP_KC_CATALOG",
+        "FG-AI calls CC directory-Users",
+    )
+    trusted_group_911: str = os.getenv("TRUSTED_GROUP_911", "FG-AI calls 911-Users")
 
     # LDAP / Active Directory
     ldap_url: str = os.getenv("LDAP_URL", "")
@@ -36,6 +65,7 @@ class Settings:
     ldap_group_dn_admin: str = os.getenv("LDAP_GROUP_DN_ADMIN", "")
     ldap_group_dn_911: str = os.getenv("LDAP_GROUP_DN_911", "")
     ldap_group_dn_kc: str = os.getenv("LDAP_GROUP_DN_KC", "")
+    ldap_group_dn_kc_catalog: str = os.getenv("LDAP_GROUP_DN_KC_CATALOG", "")
 
     # Optional: local superuser for UI (full access, bypass LDAP). Leave empty to disable.
     ui_superuser_login: str = os.getenv("UI_SUPERUSER_LOGIN", "") or os.getenv("SUPERUSER_LOGIN", "")
