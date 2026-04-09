@@ -1,168 +1,145 @@
-Проект для обработки звонков (КЦ / 911): сканирование аудио, транскрибация Whisper, хранение в PostgreSQL, фоновые задачи Celery (транскрибация, классификация, саммаризация, каталог), FastAPI + UI с ролевым доступом.
+# Транскрибация и обработка звонков (КЦ / 911)
 
-## 1) Подготовка окружения (локально)
+Сервис: сканирование аудио, транскрибация Whisper, PostgreSQL, фоновые задачи Celery (транскрибация, классификация, саммаризация, каталог), **FastAPI** + веб-интерфейс с разграничением по ролям.
 
-1. Виртуальное окружение Python **3.11**.
-2. Установка зависимостей: `pip install -r requirements.txt`
+**Рекомендуемый вход в проде:** reverse-proxy (OAuth2 / OpenID Connect или AD) передаёт в приложение заголовки **`X-Forwarded-Login`**, **`X-Forwarded-Roles`** и/или **`X-Forwarded-Groups`** — без хранения каталога пользователей в приложении. Соответствие **группам AD** настраивается на стороне прокси; значения по умолчанию в коде совпадают с корпоративными группами:
+
+| Группа AD (подстрока в заголовке) | Доступ |
+|-----------------------------------|--------|
+| `AG-AI calls-Administrators` | Администратор: оба типа звонков, пайплайны, API ADMIN |
+| `FG-AI calls CC-Users` | Звонки КЦ, классификация |
+| `FG-AI calls CC directory-Users` | КЦ + редактирование справочника тем |
+| `FG-AI calls 911-Users` | Звонки 911 |
+
+Имена ролей в **`X-Forwarded-Roles`** (если прокси отдаёт готовый список ролей вместо групп) задаются переменными `TRUSTED_ROLE_*` в `.env` (см. `.env.example`).
+
+Опционально для локальной отладки: **`UI_AUTH_MODE=ldap`** — форма входа и LDAP (см. `.env.example`). В проде обычно **`UI_AUTH_MODE=trusted_headers`**.
+
+---
+
+## 1. Подготовка окружения
+
+1. Python **3.11**.
+2. `pip install -r requirements.txt`
 3. Скопируйте `.env.example` в `.env` и заполните значения.
 
-Если pip пишет про `\x00` в первой строке `requirements.txt` или «Invalid requirement» с пробелами между буквами — файл случайно сохранён как **UTF-16**. Нужна кодировка **UTF-8** (в VS Code / PyCharm: *Reopen with Encoding* / *Save with Encoding* → UTF-8), либо заново взять файл из репозитория.
+Если pip ругается на `\x00` в `requirements.txt` — файл сохранён как **UTF-16**; пересохраните в **UTF-8**.
 
-## 2) Параметры `.env`
+---
 
-**Обязательные (минимум для API):**
+## 2. Обязательные и основные переменные `.env`
 
-- `DATABASE_URL`
-- `API_KEY_911`, `API_KEY_KC`, `API_KEY_ADMIN`
-- `SESSION_SECRET` (сессия UI)
+| Переменная | Назначение |
+|------------|------------|
+| `DATABASE_URL` | PostgreSQL, формат `postgresql+psycopg2://...` |
+| `API_KEY_911`, `API_KEY_KC`, `API_KEY_ADMIN` | Ключи JSON API (**только заголовок `X-API-Key`**, без query) |
+| `SESSION_SECRET` | Подпись cookie сессии (для режима формы / LDAP) |
+| `REDIS_PASSWORD` | Пароль Redis в Docker Compose (брокер Celery) |
+| `FLOWER_BASIC_AUTH` | `логин:пароль` для Flower; удобно совместить с `UI_SUPERUSER_*` |
+| `UI_AUTH_MODE` | `trusted_headers` (прод) или `ldap` (отладка) |
 
-**Сервис:**
+Cookie за HTTPS: **`SESSION_COOKIE_SECURE=1`** (по умолчанию включено).
 
-- `APP_HOST`, `APP_PORT`
+Наблюдаемость:
 
-**UI и вход:**
+- **`LOG_JSON=1`** — JSON-логи в stdout.
+- **`PROMETHEUS_ENABLED=1`** — endpoint **`GET /metrics`**.
+- **`OTEL_ENABLED=1`** и **`OTEL_EXPORTER_OTLP_ENDPOINT`** — опционально установите `pip install -r requirements-otel.txt` (см. комментарии в файле из‑за зависимостей protobuf).
 
-- **LDAP** (основной вход): `LDAP_URL`, `LDAP_BASE_DN`, `LDAP_BIND_DN`, `LDAP_BIND_PASSWORD`, `LDAP_USER_FILTER`, группы `LDAP_GROUP_DN_*`
-- Опционально **суперпользователь** (полный ADMIN, без LDAP): `UI_SUPERUSER_LOGIN` / `UI_SUPERUSER_PASSWORD` (или `SUPERUSER_*`)
+Пути к моделям, Qdrant, Celery — см. `.env.example`.
 
-**Celery / Redis** (если воркеры не только в Docker):
+---
 
-- `CELERY_BROKER_URL`, `CELERY_RESULT_BACKEND` (например `redis://localhost:6379/0`)
-
-**Flower** (монитор очередей; в проде задайте пароль):
-
-- `FLOWER_BASIC_AUTH=user:password`
-- `FLOWER_PORT` (по умолчанию в compose — 5555)
-
-**Модели и RAG:** см. `.env.example` (`WHISPER_*`, `GEMMA_MODEL_PATH`, эмбеддинги, `QDRANT_*`).
-
-## 3) Запуск FastAPI без Docker
+## 3. Запуск без Docker
 
 ```bash
 uvicorn api_service.main:app --host 0.0.0.0 --port 5000
 ```
 
-- Swagger: `http://<host>:5000/docs`
-- UI: `http://<host>:5000/` (вход), `http://<host>:5000/calls`, `/classified-calls`, `/users`, `/pipeline-runs` (ADMIN), `/catalog` (ADMIN)
-- Проверка готовности: `GET /healthz`
+- Документация API: `http://<host>:5000/docs`
+- UI: `/`, `/calls`, `/classified-calls`, `/users`, `/pipeline-runs` (админ пайплайна), `/catalog` (справочник — админ сервиса или роль редактора справочника КЦ)
+- Готовность: **`GET /healthz`**
+- Метрики: **`GET /metrics`** (если не отключено)
 
-## 4) Docker Compose
+В каждом ответе присутствует заголовок **`X-Request-ID`** (или передайте свой `X-Request-ID`).
 
-Файл `docker-compose.yml` поднимает связку для прода/стенда:
+---
 
-| Сервис | Назначение |
-|--------|------------|
-| `redis` | Брокер и backend результатов Celery |
-| `web` | FastAPI (`uvicorn`), порт **5000** |
-| `worker-transcribe` | Воркер очереди **`q.transcribe`** (тяжёлая транскрибация), `concurrency=1` |
-| `worker-light` | Воркер очередей **`q.classify`**, **`q.catalog`**, **`q.summarize`** |
-| `flower` | Веб‑монитор Celery, порт **5555** (см. ниже) |
+## 4. Docker и Docker Compose
 
-Запуск из корня репозитория (нужны `.env` и доступная схема БД):
+Образ: **multi-stage** `Dockerfile`, приложение под пользователем **`appuser`** (uid 1000), **HEALTHCHECK** на `/healthz`.
 
 ```bash
 docker compose up -d --build
 ```
 
-Переменные **`CELERY_BROKER_URL`** / **`CELERY_RESULT_BACKEND`** для `web` и воркеров в compose заданы на `redis://redis:6379/0`. Путь к моделям и `DATABASE_URL` должны указывать на те ресурсы, которые видит контейнер (при необходимости добавьте **volumes** в `docker-compose.yml` для каталогов с Whisper/Gemma и сетевой доступ к Postgres/Qdrant).
+| Сервис | Назначение |
+|--------|------------|
+| `redis` | Брокер Celery, **порт наружу не публикуется**, пароль **`REDIS_PASSWORD`** |
+| `web` | FastAPI, порт **5000** |
+| `worker-transcribe` | Очередь **`q.transcribe`** |
+| `worker-light` | **`q.classify`**, **`q.catalog`**, **`q.summarize`** |
+| `flower` | Монитор Celery, порт **5555**, обязательно **`FLOWER_BASIC_AUTH`** |
 
-Образ собирается из `Dockerfile` (Python 3.11, ffmpeg, зависимости из `requirements.txt`).
+`CELERY_BROKER_URL` / `CELERY_RESULT_BACKEND` в compose задаются с паролем Redis. Пути к моделям и `DATABASE_URL` должны быть доступны из контейнера (при необходимости добавьте **volumes**).
 
-## 5) Очереди Celery
+Транскрибация на **GPU:** при необходимости доступа к устройствам NVIDIA смонтируйте runtime в compose и при необходимости переопределите пользователя в образе (по умолчанию не root).
 
-Конфигурация приложения: `app/celery_app.py` (автообнаружение задач в пакете **`jobs`**).
+---
 
-| Очередь | Задачи (по маршрутизации) |
-|---------|---------------------------|
-| `q.transcribe` | `jobs.transcribe_*` |
-| `q.classify` | `jobs.classify_*` |
-| `q.catalog` | `jobs.catalog_*` (например генерация синонимов после сохранения справочника) |
-| `q.summarize` | `jobs.summarize_*` |
+## 5. Аутентификация
 
-Отдельные контейнеры в compose разделяют тяжёлую транскрибацию и «лёгкие» задачи. При необходимости добавьте ещё воркеры с тем же образом и другим `-Q`.
-
-Ручная постановка в очередь (см. также `scripts/enqueue.py`): вызов `.delay()` на задачах из `jobs/` при работающем брокере и воркерах.
-
-**Логи пайплайнов (`pipeline_runs`):** при остановке воркера (SIGTERM/SIGINT, `docker stop`, Ctrl+C в процессе воркера) активные запуски со статусом `RUNNING` автоматически получают **`INTERRUPTED`**, заполняются **`finished_at`**, **`duration_seconds`**, **`processed_calls`** (по возможности — фактическое число классификаций/саммаризаций или число звонков, привязанных к запуску у транскрибации) и пояснение в **`error_message`**. Жёсткое **`SIGKILL` / kill -9** обработчик не перехватывает — такие записи могут остаться `RUNNING`. Повторный вызов `finish_pipeline_run` для уже завершённой строки не перезаписывает запись. Реализация: `jobs/pipeline_lifecycle.py`, подключение — `app/celery_app.py` (`worker_process_init` / `worker_ready`).
-
-## 6) Flower: как пользоваться
-
-1. После `docker compose up` откройте **`http://<хост>:5555/`** (порт см. `FLOWER_PORT`, по умолчанию 5555).
-2. Если задан **`FLOWER_BASIC_AUTH`** в `.env`, браузер запросит логин и пароль.
-3. Полезные разделы:
-   - **Workers** — какие воркеры онлайн, какие очереди слушают, нагрузка;
-   - **Tasks** — активные, успешные, сбойные задачи;
-   - **Monitor** — поток событий в реальном времени.
-4. **Безопасность:** не выставляйте Flower в публичную сеть без пароля и по возможности без VPN/firewall; это полный доступ к метаданным очередей и управлению воркерами.
-
-Flower использует тот же Redis, что и воркеры (`CELERY_BROKER_URL` в сервисе `flower`).
-
-## 7) Аутентификация и роли
-
-**JSON API (`/api/*`):**
+### JSON API (`/api/*`)
 
 - Только заголовок **`X-API-Key`**.
-- Ключи: `API_KEY_911` → только тип `911`; `API_KEY_KC` → только `КЦ`; `API_KEY_ADMIN` → оба типа + админские методы.
+- Ключи: `API_KEY_911` → только 911; `API_KEY_KC` → только КЦ; `API_KEY_ADMIN` → оба типа + админские методы.
 
-**Веб‑интерфейс (сессия в cookie):**
+### Веб-интерфейс
 
-- Вход через **LDAP** по переменным `LDAP_*`; роль определяется членством в `LDAP_GROUP_DN_ADMIN` / `LDAP_GROUP_DN_911` / `LDAP_GROUP_DN_KC`.
-- Если задан **суперпользователь** (`UI_SUPERUSER_LOGIN` / `UI_SUPERUSER_PASSWORD`), он получает полный доступ **ADMIN** до проверки LDAP.
+- **`trusted_headers`:** логин и роли/группы с каждым запросом; приложение не синхронизирует каталог AD.
+- **`ldap`:** форма входа, опционально суперпользователь `UI_SUPERUSER_*`.
 
-API‑ключи для HTML‑страниц не используются.
+---
 
-## 8) API (кратко)
+## 6. API (кратко)
 
-- `GET /api/calls` — фильтры: `period`, `date_from`, `date_to`, `manager`, `status`, `call_type`, `limit`, `offset`; **`include_text`** по умолчанию **false** (текст транскрипции не отдаётся, пока не запрошен явно — объём ответа меньше).
-- `GET /api/calls/export.xlsx`, `GET /api/classified-calls/export.xlsx` — выгрузки.
-- `GET /api/users`, `GET /api/pipeline-runs` (ADMIN), `GET /api/catalog` (ADMIN).
+- `GET /api/calls` — фильтры, **`include_text`** по умолчанию false.
+- Экспорт Excel: `/api/calls/export.xlsx`, `/api/classified-calls/export.xlsx`.
+- `GET /api/users`, `GET /api/pipeline-runs` (ADMIN), `GET /api/catalog` (ADMIN по API-ключу).
 
-Статусы звонков в API — строковые **коды** из справочника `call_statuses` (см. миграцию `20260402_*`).
+---
 
-## 9) UI
+## 7. UI
 
-- Таблицы **«Звонки»** и **«Классификация»**: серверная пагинация (**~200 строк на страницу**), порядок по умолчанию по дате на стороне сервера; сортировка по клику на заголовок — **только среди строк текущей страницы**.
-- Текст транскрипции в списках **подгружается по «Показать»** отдельным запросом `GET /ui/calls/{id}/active-transcription` (в общий список большой TEXT не тянется).
-- Классификация: страница `/classified-calls` (роли КЦ и ADMIN), справочник `/catalog` (ADMIN).
+- Пагинация списков (~200 строк), транскрипт подгружается отдельно: `GET /ui/calls/{id}/active-transcription`.
+- Классификация КЦ: `/classified-calls` (роли с доступом к КЦ).
+- Справочник: `/catalog` — **администратор сервиса** или **редактор справочника КЦ** (группа `FG-AI calls CC directory-Users` / роль `kc_catalog` в заголовке).
 
-## 10) RAG: справочник тем, синонимы, Qdrant
+---
 
-1. Импорт каталога: `python rag/sync_topic_catalog.py`
-2. Синонимы: `python rag/generate_catalog_synonyms.py` (в UI после сохранения записи может ставиться задача в очередь, см. `CATALOG_AUTO_SYNONYMS`).
+## 8. RAG, классификация, миграции
 
-Подробнее — `README_ARCHITECT.md`.
+- RAG и каталог: `README_ARCHITECT.md`, `rag/README.md`.
+- **Сканирование папок (КЦ / 911):** длительность файлов считается в `audio_utils.py` — предпочтительно **`ffprobe`** в PATH (входит в состав ffmpeg, есть в Docker-образе приложения); иначе soundfile / librosa. Это сильно влияет на время этапа `scan` на больших объёмах mp3/m4a.
+- **БД при скане:** кэшируются id статусов звонка (`get_call_status_by_code`), пересчёт `parts_count` / длительности по частям — агрегатами SQL без загрузки всех строк `call_parts` (`refresh_call_rollups`).
+- Миграции PostgreSQL: `db/migrations/*.sql` — порядок и однократные скрипты см. комментарии в файлах.
+- Проверка соответствия ORM и БД: `python db/verify_db_contract.py`.
+- Для пустой БД можно создать таблицы: `python -c "from db.init_db import create_all; create_all()"`.
 
-## 11) Классификация КЦ
+---
 
-Статусы отбора по умолчанию: **`TRANSCRIBED`**, **`CLASSIFICATION_FAILED`**. В процессе: **`CLASSIFYING`** → **`CLASSIFIED`** / **`CLASSIFICATION_FAILED`**.
+## 9. CI/CD (GitLab)
 
-Рекомендуемый скрипт: `rag/classify_calls_v2.py`. Задачи в проде могут выполняться через **jobs** и воркер **`q.classify`**.
+Файл `.gitlab-ci.yml`:
 
-## 12) Миграции PostgreSQL
+- **test:** PostgreSQL service, `wait_for_postgres`, `init_db`, `verify_db_contract`.
+- **build:** сборка и push Docker-образа.
+- **deploy:** SSH и `docker compose pull && up` на прод.
 
-Примеры (из корня проекта, URI без `+psycopg2` для `psql`):
+При необходимости переопределите **`DATABASE_URL`** в GitLab CI/CD Variables.
 
-```bash
-psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/migrations/20260305_add_pipeline_code_to_pipeline_runs.sql
-psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/migrations/20260312_add_pipeline_metrics.sql
-```
+---
 
-Каталог и классификации: `db/migrations/20260323_*`, при необходимости `20260326_*.sql`.
+## 10. Резервное копирование
 
-**Сброс тестовых классификаций КЦ** (после этого для схемы со `status_id` см. комментарий в файле):
-
-```bash
-psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/migrations/20260401_reset_call_classifications_and_kc_status.sql
-```
-
-**Справочник статусов звонков + переход с `calls.status` на FK** (однократно):
-
-```bash
-psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/migrations/20260402_call_statuses_normalize.sql
-```
-
-Проверка соответствия ORM и БД: `python db/verify_db_contract.py`.
-
-## 13) CI/CD
-
-В GitLab: этапы **test** (`verify_db_contract`), **build** (Docker image), **deploy** (SSH + `docker compose pull && up`). См. `.gitlab-ci.yml`.
+См. **[docs/BACKUP.md](docs/BACKUP.md)** (PostgreSQL, Qdrant, политика хранения).

@@ -1,0 +1,7 @@
+# Опционально: OTLP-трейсы (Jaeger, Grafana Tempo и т.д.).
+# Установка: pip install -r requirements-otel.txt
+# Внимание: версии OpenTelemetry часто тянут protobuf<6 — проверьте совместимость с qdrant-client/grpc в вашем окружении.
+opentelemetry-api==1.28.2
+opentelemetry-sdk==1.28.2
+opentelemetry-instrumentation-fastapi==0.49b2
+opentelemetry-exporter-otlp-proto-grpc==1.28.2

@@ -14,6 +14,12 @@ from sqlalchemy.orm import load_only, selectinload
 from starlette.middleware.sessions import SessionMiddleware
 
 from api_service.config import settings
+from api_service.observability import (
+    RequestContextMiddleware,
+    instrument_prometheus,
+    maybe_setup_opentelemetry,
+    setup_logging,
+)
 from api_service.auth import (
     ROLE_911,
     ROLE_ADMIN,
@@ -40,6 +46,8 @@ from db.crud import (
 from db.models import Call, CallClassification, CallStatus, CallType, PipelineRun, TopicCatalogEntry, Transcription, User
 from rag.catalog_service import entry_source_hash, sync_catalog_entries
 
+setup_logging()
+
 app = FastAPI(title="Audio Calls API", version="0.6.0")
 templates = Jinja2Templates(directory="api_service/templates")
 
@@ -47,8 +55,12 @@ app.add_middleware(
     SessionMiddleware,
     secret_key=settings.session_secret,
     same_site="lax",
-    https_only=False,  # set True when behind HTTPS in prod
+    https_only=settings.session_cookie_secure,
 )
+app.add_middleware(RequestContextMiddleware)
+
+instrument_prometheus(app)
+maybe_setup_opentelemetry(app)
 
 
 @app.get("/healthz")
@@ -1035,6 +1047,8 @@ def pipeline_runs_api(role: str = Depends(get_current_role), limit: int = Query(
                     finished_at=r.finished_at,
                     duration_seconds=r.duration_seconds,
                     processed_calls=r.processed_calls,
+                    total_audio_seconds=r.total_audio_seconds,
+                    avg_rtf=r.avg_rtf,
                     error_message=r.error_message,
                 )
                 for r in rows

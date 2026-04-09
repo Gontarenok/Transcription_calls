@@ -8,12 +8,24 @@ variables:
   DOCKER_DRIVER: overlay2
   IMAGE_TAG: "$CI_COMMIT_SHA"
   IMAGE_NAME: "$CI_REGISTRY_IMAGE/transcription-calls"
+  # Тест `verify_db_contract` поднимает схему через ORM (`db/init_db.py`) в сервисном PostgreSQL.
+  # При необходимости переопределите в GitLab: Settings → CI/CD → Variables → DATABASE_URL (например внешний стенд).
+  POSTGRES_DB: transcription_calls_ci
+  POSTGRES_USER: ci
+  POSTGRES_PASSWORD: ci
+  POSTGRES_HOST_AUTH_METHOD: trust
+  DATABASE_URL: "postgresql+psycopg2://ci:ci@postgres:5432/transcription_calls_ci"
 
 test:
   stage: test
   image: python:3.11
+  services:
+    - name: postgres:15-alpine
+      alias: postgres
   script:
     - pip install -r requirements.txt
+    - python scripts/wait_for_postgres.py
+    - python -c "from db.init_db import create_all; create_all()"
     - python db/verify_db_contract.py
   only:
     - branches
@@ -57,4 +69,3 @@ deploy_prod:
     name: production
   only:
     - main
-

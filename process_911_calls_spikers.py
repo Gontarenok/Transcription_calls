@@ -11,6 +11,7 @@ import librosa
 import numpy as np
 import whisper
 
+from audio_utils import get_audio_duration_seconds
 from db.base import SessionLocal
 from db.crud import (
     add_call_part,
@@ -41,13 +42,6 @@ def parse_octell_call_id(file_name: str) -> str | None:
         return None
     octell_id = stem[:idx].strip("_-")
     return octell_id or None
-
-
-def get_audio_duration_seconds(file_path: Path) -> float | None:
-    try:
-        return float(librosa.get_duration(path=str(file_path)))
-    except Exception:
-        return None
 
 
 def collect_911_calls_metadata(db, *, root_dir: Path, recursive: bool = False) -> dict[str, int]:

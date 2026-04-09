@@ -14,7 +14,7 @@
 
   <div class="table-wrap">
     <table class="sortable-table">
-      <thead><tr><th data-sort-type="num">ID</th><th data-sort-type="str">Пайплайн</th><th data-sort-type="str">Статус</th><th data-sort-type="date">Начало</th><th data-sort-type="date">Окончание</th><th data-sort-type="num">Длительность (сек)</th><th data-sort-type="num">Обработано звонков</th><th data-sort-type="str">Ошибка</th></tr></thead>
+      <thead><tr><th data-sort-type="num">ID</th><th data-sort-type="str">Пайплайн</th><th data-sort-type="str">Статус</th><th data-sort-type="date">Начало</th><th data-sort-type="date">Окончание</th><th data-sort-type="num">Длительность (сек)</th><th data-sort-type="num">Обработано звонков</th><th data-sort-type="num">Аудио (сек)</th><th data-sort-type="num">Avg RTF</th><th data-sort-type="str">Ошибка</th></tr></thead>
       <tbody>
       {% for r in rows %}
         <tr>
@@ -25,6 +25,8 @@
           <td data-sort-value="{{ r.finished_at.isoformat() if r.finished_at else '' }}">{{ r.finished_at or '' }}</td>
           <td data-sort-value="{{ r.duration_seconds if r.duration_seconds is not none else '' }}">{{ r.duration_seconds or '' }}</td>
           <td data-sort-value="{{ r.processed_calls }}">{{ r.processed_calls }}</td>
+          <td data-sort-value="{{ r.total_audio_seconds if r.total_audio_seconds is not none else '' }}">{% if r.total_audio_seconds is not none %}{{ "%.2f"|format(r.total_audio_seconds) }}{% else %}—{% endif %}</td>
+          <td data-sort-value="{{ r.avg_rtf if r.avg_rtf is not none else '' }}">{% if r.avg_rtf is not none %}{{ "%.4f"|format(r.avg_rtf) }}{% else %}—{% endif %}</td>
           <td style="color:#b91c1c;" data-sort-value="{{ (r.error_message or '')|e }}">{{ r.error_message or '' }}</td>
         </tr>
       {% endfor %}

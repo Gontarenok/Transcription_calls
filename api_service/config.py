@@ -24,8 +24,8 @@ class Settings:
     # UI session (форма входа LDAP / суперпользователь; в режиме trusted_headers почти не используется)
     session_secret: str = os.getenv("SESSION_SECRET", "change_me_in_prod")
 
-    # UI: ldap | trusted_headers (заголовки от reverse-proxy после OAuth2/AD на стороне nginx/IIS)
-    ui_auth_mode: str = (os.getenv("UI_AUTH_MODE", "ldap") or "ldap").strip().lower()
+    # UI: trusted_headers (прод: OAuth2/OIDC/AD через reverse-proxy) | ldap (локальная отладка)
+    ui_auth_mode: str = (os.getenv("UI_AUTH_MODE", "trusted_headers") or "trusted_headers").strip().lower()
 
     # Доверенные заголовки (только за reverse-proxy, срез внешних X-Forwarded-* на границе)
     trusted_header_login: str = os.getenv("TRUSTED_HEADER_LOGIN", "X-Forwarded-Login")
@@ -70,6 +70,19 @@ class Settings:
     # Optional: local superuser for UI (full access, bypass LDAP). Leave empty to disable.
     ui_superuser_login: str = os.getenv("UI_SUPERUSER_LOGIN", "") or os.getenv("SUPERUSER_LOGIN", "")
     ui_superuser_password: str = os.getenv("UI_SUPERUSER_PASSWORD", "") or os.getenv("SUPERUSER_PASSWORD", "")
+
+    # Cookie: за HTTPS выставить secure (прод за reverse-proxy с TLS)
+    session_cookie_secure: bool = os.getenv("SESSION_COOKIE_SECURE", "1").strip().lower() in {"1", "true", "yes", "on"}
+
+    # Логи: JSON в stdout (удобно для Loki/ELK); иначе plain text
+    log_json: bool = os.getenv("LOG_JSON", "1").strip().lower() in {"1", "true", "yes", "on"}
+    log_level: str = (os.getenv("LOG_LEVEL", "INFO") or "INFO").strip().upper()
+
+    # Prometheus /metrics (внутренняя сеть / мониторинг)
+    prometheus_enabled: bool = os.getenv("PROMETHEUS_ENABLED", "1").strip().lower() in {"1", "true", "yes", "on"}
+
+    # OpenTelemetry OTLP (Jaeger, Tempo и т.д.) — задайте OTEL_EXPORTER_OTLP_ENDPOINT
+    otel_enabled: bool = os.getenv("OTEL_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}
 
 
 settings = Settings()

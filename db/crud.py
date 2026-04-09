@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
+from threading import Lock
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, load_only, selectinload
@@ -82,10 +83,26 @@ def get_or_create_user(
     return user
 
 
+_status_id_by_code: dict[str, int] = {}
+_status_cache_lock = Lock()
+
+
 def get_call_status_by_code(db: Session, code: str) -> CallStatus:
+    """Кэш id по коду — после нормализации схемы статусы не меняются; снимает лишние SELECT на каждый звонок."""
+    with _status_cache_lock:
+        sid = _status_id_by_code.get(code)
+    if sid is not None:
+        row = db.get(CallStatus, sid)
+        if row is not None:
+            return row
+        with _status_cache_lock:
+            _status_id_by_code.pop(code, None)
+
     row = db.scalar(select(CallStatus).where(CallStatus.code == code))
     if row is None:
         raise ValueError(f"Unknown call status code: {code!r}")
+    with _status_cache_lock:
+        _status_id_by_code[code] = row.id
     return row
 
 
@@ -200,19 +217,30 @@ def add_call_part(
 
 
 def refresh_call_rollups(db: Session, call_id: int) -> Call | None:
+    """Пересчёт агрегатов по частям без загрузки всех строк CallPart в память (быстрее при большом числе частей)."""
     call = db.get(Call, call_id)
     if not call:
         return None
 
-    parts = list(db.scalars(select(CallPart).where(CallPart.call_id == call_id)))
-    if parts:
-        call.parts_count = len(parts)
-        total_duration = sum(float(p.duration_seconds or 0.0) for p in parts)
-        call.duration_seconds = total_duration or None
-        first_part = min(parts, key=lambda item: (item.call_started_at, item.part_number))
-        call.call_started_at = first_part.call_started_at
-        call.file_name = first_part.file_name
-        call.source_file_path = first_part.source_file_path
+    n = db.scalar(select(func.count(CallPart.id)).where(CallPart.call_id == call_id)) or 0
+    total_dur = db.scalar(
+        select(func.coalesce(func.sum(CallPart.duration_seconds), 0.0)).where(CallPart.call_id == call_id)
+    )
+    total_float = float(total_dur) if total_dur is not None else 0.0
+
+    if int(n) > 0:
+        call.parts_count = int(n)
+        call.duration_seconds = total_float if total_float > 0 else None
+        first_part = db.scalar(
+            select(CallPart)
+            .where(CallPart.call_id == call_id)
+            .order_by(CallPart.call_started_at.asc(), CallPart.part_number.asc())
+            .limit(1)
+        )
+        if first_part:
+            call.call_started_at = first_part.call_started_at
+            call.file_name = first_part.file_name
+            call.source_file_path = first_part.source_file_path
     else:
         call.parts_count = 1
 

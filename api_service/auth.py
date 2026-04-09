@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import secrets
 from dataclasses import dataclass
-from typing import Any
+from typing import Annotated, Any
 
-from fastapi import Header, HTTPException, Query, Request, status
-from ldap3 import ALL, Connection, Server, Tls
+from fastapi import Header, HTTPException, Request, status
+from ldap3 import ALL, Connection, Server
 
 from api_service.config import settings
 
@@ -29,6 +29,11 @@ class UiIdentity:
     @classmethod
     def from_single_role(cls, username: str, role: str, groups: list[str]) -> UiIdentity:
         ct = set(allowed_call_types_for_role(role))
+        if not ct:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Неизвестная или недопустимая роль сессии",
+            )
         return cls(
             username=username,
             role=role,
@@ -40,6 +45,8 @@ class UiIdentity:
 
 
 def allowed_call_types_for_role(role: str) -> set[str]:
+    if role == ROLE_ADMIN:
+        return {"911", "КЦ"}
     if role == ROLE_911:
         return {"911"}
     if role == ROLE_KC:
@@ -48,7 +55,7 @@ def allowed_call_types_for_role(role: str) -> set[str]:
         return {"КЦ"}
     if role == ROLE_MIXED_UI:
         return {"911", "КЦ"}
-    return {"911", "КЦ"}
+    return set()
 
 
 def resolve_role_by_key(key: str | None) -> str | None:
@@ -64,10 +71,9 @@ def resolve_role_by_key(key: str | None) -> str | None:
 
 
 def get_current_role(
-    x_api_key: str | None = Header(default=None),
-    api_key: str | None = Query(default=None),
+    x_api_key: Annotated[str | None, Header(alias="X-API-Key")] = None,
 ) -> str:
-    key = x_api_key or api_key
+    key = x_api_key
     role = resolve_role_by_key(key)
     if role:
         return role
@@ -219,20 +225,36 @@ def _ldap_member_matches(member_of: str, configured: str) -> bool:
     return _marker_in_token(configured.strip(), member_of)
 
 
+def _ldap_open_and_bind(*, user_dn: str | None, password: str | None, invalid_credentials: bool = False) -> Connection:
+    """ldap://: сначала соединение и StartTLS, затем bind. ldaps://: только bind."""
+    if not settings.ldap_url:
+        raise HTTPException(status_code=500, detail="LDAP is not configured (LDAP_URL missing)")
+    use_ldaps = settings.ldap_url.lower().startswith("ldaps")
+    server = Server(settings.ldap_url, get_info=ALL)
+    conn = Connection(server, user=user_dn, password=password, auto_bind=False)
+    conn.open()
+    if not use_ldaps and settings.ldap_starttls:
+        try:
+            conn.start_tls()
+        except Exception as exc:
+            conn.unbind()
+            raise HTTPException(status_code=500, detail=f"LDAP StartTLS failed: {exc}")
+    if not conn.bind():
+        conn.unbind()
+        raise HTTPException(
+            status_code=403 if invalid_credentials else 500,
+            detail="Invalid credentials" if invalid_credentials else "LDAP bind failed",
+        )
+    return conn
+
+
 def ldap_authenticate_and_resolve_role(*, username: str, password: str) -> UiIdentity:
     if not settings.ldap_url:
         raise HTTPException(status_code=500, detail="LDAP is not configured (LDAP_URL missing)")
     if not username or not password:
         raise HTTPException(status_code=400, detail="Missing username/password")
 
-    server = Server(settings.ldap_url, get_info=ALL)
-    conn = Connection(server, user=settings.ldap_bind_dn or None, password=settings.ldap_bind_password or None, auto_bind=True)
-    if settings.ldap_starttls:
-        try:
-            conn.start_tls()
-        except Exception as exc:
-            conn.unbind()
-            raise HTTPException(status_code=500, detail=f"LDAP StartTLS failed: {exc}")
+    conn = _ldap_open_and_bind(user_dn=settings.ldap_bind_dn or None, password=settings.ldap_bind_password or None)
 
     base_dn = settings.ldap_base_dn or ""
     if not base_dn:
@@ -251,10 +273,11 @@ def ldap_authenticate_and_resolve_role(*, username: str, password: str) -> UiIde
     entry = conn.entries[0]
     user_dn = str(getattr(entry, "distinguishedName", "") or "").strip() or str(entry.entry_dn)
     groups = _extract_memberof(entry)
-
-    user_conn = Connection(server, user=user_dn, password=password, auto_bind=True)
-    user_conn.unbind()
     conn.unbind()
+
+    # Проверка пароля пользователя — отдельное соединение с тем же порядком TLS.
+    verify = _ldap_open_and_bind(user_dn=user_dn, password=password, invalid_credentials=True)
+    verify.unbind()
 
     is_admin = any(_ldap_member_matches(g, settings.ldap_group_dn_admin) for g in groups)
     is_kc_cat = any(_ldap_member_matches(g, settings.ldap_group_dn_kc_catalog) for g in groups)

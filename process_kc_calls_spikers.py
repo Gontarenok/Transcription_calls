@@ -11,6 +11,7 @@ import librosa
 import numpy as np
 import whisper
 
+from audio_utils import get_audio_duration_seconds
 from db.base import SessionLocal
 from model_paths import model_settings
 from db.crud import (
@@ -69,13 +70,6 @@ def parse_manager_folder(folder_name: str) -> tuple[str | None, str | None]:
     full_name = " ".join(parts[:3]).strip() or None
     domain = parts[-1].strip() or None
     return full_name, domain
-
-
-def get_audio_duration_seconds(file_path: Path) -> float | None:
-    try:
-        return float(librosa.get_duration(path=str(file_path)))
-    except Exception:
-        return None
 
 
 def collect_kc_calls_metadata(db, *, root_dir: Path, day: str, manager_limit: int | None = None) -> dict[str, int]:

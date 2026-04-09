@@ -47,6 +47,8 @@ class PipelineRunOut(BaseModel):
     finished_at: datetime | None
     duration_seconds: int | None
     processed_calls: int
+    total_audio_seconds: float | None = None
+    avg_rtf: float | None = None
     error_message: str | None
 
 
