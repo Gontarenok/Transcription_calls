@@ -67,6 +67,10 @@ class Settings:
     ldap_group_dn_kc: str = os.getenv("LDAP_GROUP_DN_KC", "")
     ldap_group_dn_kc_catalog: str = os.getenv("LDAP_GROUP_DN_KC_CATALOG", "")
 
+    # Суперпользователь UI: при UI_SUPERUSER_ENABLED=1 и заданных логине/пароле доступна форма входа
+    # даже при UI_AUTH_MODE=trusted_headers (удобно для dev; в проде оставьте 0).
+    ui_superuser_enabled: bool = os.getenv("UI_SUPERUSER_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}
+
     # Optional: local superuser for UI (full access, bypass LDAP). Leave empty to disable.
     ui_superuser_login: str = os.getenv("UI_SUPERUSER_LOGIN", "") or os.getenv("SUPERUSER_LOGIN", "")
     ui_superuser_password: str = os.getenv("UI_SUPERUSER_PASSWORD", "") or os.getenv("SUPERUSER_PASSWORD", "")

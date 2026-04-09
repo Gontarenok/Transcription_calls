@@ -324,6 +324,18 @@ def login_page(request: Request, error: str | None = Query(default=None)):
             return RedirectResponse(url="/calls", status_code=302)
         except HTTPException:
             pass
+        if settings.ui_superuser_enabled:
+            return templates.TemplateResponse(
+                "login.html",
+                {
+                    "request": request,
+                    "show_header": False,
+                    "active_page": "login",
+                    "error": error,
+                    "trusted_auth": False,
+                    "superuser_via_trusted_mode": True,
+                },
+            )
         return templates.TemplateResponse(
             "login.html",
             {
@@ -332,6 +344,7 @@ def login_page(request: Request, error: str | None = Query(default=None)):
                 "active_page": "login",
                 "error": error or "Вход выполняется через корпоративный портал (нет заголовков доступа).",
                 "trusted_auth": True,
+                "superuser_via_trusted_mode": False,
             },
             status_code=403,
         )
@@ -343,6 +356,7 @@ def login_page(request: Request, error: str | None = Query(default=None)):
             "active_page": "login",
             "error": error,
             "trusted_auth": False,
+            "superuser_via_trusted_mode": False,
         },
     )
 
@@ -352,6 +366,7 @@ def login_submit(request: Request, username: str = Form(...), password: str = Fo
     try:
         ident = ui_login_authenticate(username=username.strip(), password=password)
     except HTTPException as exc:
+        trusted_block = settings.ui_auth_mode == "trusted_headers" and not settings.ui_superuser_enabled
         return templates.TemplateResponse(
             "login.html",
             {
@@ -359,12 +374,17 @@ def login_submit(request: Request, username: str = Form(...), password: str = Fo
                 "show_header": False,
                 "active_page": "login",
                 "error": str(exc.detail) if isinstance(exc.detail, str) else "Ошибка входа",
+                "trusted_auth": trusted_block,
+                "superuser_via_trusted_mode": settings.ui_auth_mode == "trusted_headers" and settings.ui_superuser_enabled,
             },
             status_code=int(exc.status_code),
         )
     request.session["username"] = ident.username
     request.session["role"] = ident.role
     request.session["groups"] = ident.groups
+    request.session["call_types"] = list(ident.call_types)
+    request.session["catalog_access"] = ident.catalog_access
+    request.session["pipeline_admin"] = ident.pipeline_admin
     return RedirectResponse(url="/calls", status_code=303)
 
 

@@ -35,7 +35,13 @@
       <p>Доступ оформляется на веб-сервере (SSO / заголовки). Обратитесь к администратору, если вы видите эту страницу.</p>
       {% if error %}<div class="err">{{ error }}</div>{% endif %}
     {% else %}
-      <p>Вход: локальный суперюзер (если задан в .env) или Active Directory.</p>
+      <p>
+        {% if superuser_via_trusted_mode|default(false) %}
+          Режим <strong>trusted_headers</strong>: доступен только вход локального суперпользователя (см. <code>UI_SUPERUSER_*</code> в .env). Прокси с заголовками имеет приоритет.
+        {% else %}
+          Вход: локальный суперюзер (если задан в .env) или Active Directory.
+        {% endif %}
+      </p>
       {% if error %}<div class="err">{{ error }}</div>{% endif %}
       <form action="/login" method="post">
         <div class="field-label">Логин</div>

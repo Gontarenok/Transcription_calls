@@ -295,6 +295,8 @@ def ldap_authenticate_and_resolve_role(*, username: str, password: str) -> UiIde
 
 
 def try_superuser_login(*, username: str, password: str) -> UiIdentity | None:
+    if not settings.ui_superuser_enabled:
+        return None
     login = (settings.ui_superuser_login or "").strip()
     pwd = settings.ui_superuser_password or ""
     if not login or not pwd:
@@ -312,11 +314,14 @@ def try_superuser_login(*, username: str, password: str) -> UiIdentity | None:
 
 
 def ui_login_authenticate(*, username: str, password: str) -> UiIdentity:
-    if settings.ui_auth_mode == "trusted_headers":
-        raise HTTPException(status_code=400, detail="Вход по форме отключён (UI_AUTH_MODE=trusted_headers)")
     su = try_superuser_login(username=username, password=password)
     if su is not None:
         return su
+    if settings.ui_auth_mode == "trusted_headers":
+        raise HTTPException(
+            status_code=400,
+            detail="Вход по форме отключён (trusted_headers). Включите UI_SUPERUSER_ENABLED=1 и задайте UI_SUPERUSER_LOGIN / UI_SUPERUSER_PASSWORD для локального суперпользователя.",
+        )
     if not (settings.ldap_url or "").strip():
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -345,9 +350,23 @@ def identity_from_session(session: dict) -> UiIdentity:
     return UiIdentity.from_single_role(username, role, groups)
 
 
+def _trusted_proxy_login_present(request: Request) -> bool:
+    k = settings.trusted_header_login
+    return bool((request.headers.get(k) or request.headers.get(k.title()) or "").strip())
+
+
 def get_current_identity_ui(request: Request) -> UiIdentity:
     if settings.ui_auth_mode == "trusted_headers":
+        # Сначала прокси (прод): заголовки важнее сессии.
+        if _trusted_proxy_login_present(request):
+            return identity_from_trusted_headers(request)
+        # Dev / аварийный вход: сессия суперпользователя, если разрешено.
+        if settings.ui_superuser_enabled:
+            session = getattr(request, "session", None) or {}
+            if session.get("username") and session.get("role"):
+                return identity_from_session(session)
         return identity_from_trusted_headers(request)
+
     session = getattr(request, "session", None) or {}
     return identity_from_session(session)
 

@@ -37,6 +37,8 @@
 | `REDIS_PASSWORD` | Пароль Redis в Docker Compose (брокер Celery) |
 | `FLOWER_BASIC_AUTH` | `логин:пароль` для Flower; удобно совместить с `UI_SUPERUSER_*` |
 | `UI_AUTH_MODE` | `trusted_headers` (прод) или `ldap` (отладка) |
+| `UI_SUPERUSER_ENABLED` | `1` — форма входа суперпользователя при `trusted_headers` (dev); `0` — только прокси (прод) |
+| `UI_SUPERUSER_LOGIN` / `UI_SUPERUSER_PASSWORD` | Локальный полный доступ в UI (если включено выше) |
 
 Cookie за HTTPS: **`SESSION_COOKIE_SECURE=1`** (по умолчанию включено).
 
@@ -96,8 +98,8 @@ docker compose up -d --build
 
 ### Веб-интерфейс
 
-- **`trusted_headers`:** логин и роли/группы с каждым запросом; приложение не синхронизирует каталог AD.
-- **`ldap`:** форма входа, опционально суперпользователь `UI_SUPERUSER_*`.
+- **`trusted_headers`:** логин и роли/группы с каждым запросом; приложение не синхронизирует каталог AD. Если **`UI_SUPERUSER_ENABLED=1`** и заданы **`UI_SUPERUSER_LOGIN`** / **`UI_SUPERUSER_PASSWORD`**, доступна форма входа суперпользователя без заголовков прокси (удобно для dev); у запросов с заголовком логина прокси по-прежнему приоритет.
+- **`ldap`:** форма входа; локальный суперпользователь только при **`UI_SUPERUSER_ENABLED=1`** и **`UI_SUPERUSER_*`** в `.env` (так отключается супер в проде при LDAP).
 
 ---
 
