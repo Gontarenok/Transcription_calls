@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from datetime import date
+
 from sqlalchemy import (
     Boolean,
+    Date,
     DateTime,
     Float,
     ForeignKey,
@@ -247,5 +250,35 @@ class PipelineRun(Base, TimestampMixin):
 
     calls: Mapped[list["Call"]] = relationship(back_populates="pipeline_run", lazy="selectin")
     classifications: Mapped[list["CallClassification"]] = relationship(back_populates="pipeline_run", lazy="selectin")
+    weekly_911_reports: Mapped[list["Weekly911Report"]] = relationship(back_populates="pipeline_run", lazy="selectin")
 
+
+class Weekly911Report(Base, TimestampMixin):
+    """Еженедельный агрегат по 911: счётчики, текст задачи Work, путь к Excel (история для аналитики)."""
+
+    __tablename__ = "weekly_911_reports"
+
+    __table_args__ = (Index("ix_weekly_911_reports_period", "period_start", "period_end"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    period_start: Mapped[date] = mapped_column(Date, nullable=False)
+    period_end: Mapped[date] = mapped_column(Date, nullable=False)
+
+    pipeline_run_id: Mapped[int | None] = mapped_column(ForeignKey("pipeline_runs.id"), index=True)
+    status: Mapped[str] = mapped_column(String(30), nullable=False, default="RUNNING", index=True)
+
+    calls_in_period: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    calls_summarized_in_period: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+    outcome_helped: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    outcome_not_helped: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    outcome_in_progress: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    outcome_unknown: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+    task_text: Mapped[str | None] = mapped_column(Text)
+    work_task_id: Mapped[int | None] = mapped_column(Integer)
+    excel_file_path: Mapped[str | None] = mapped_column(String(2048))
+    error_message: Mapped[str | None] = mapped_column(Text)
+
+    pipeline_run: Mapped["PipelineRun | None"] = relationship(back_populates="weekly_911_reports", lazy="selectin")
 

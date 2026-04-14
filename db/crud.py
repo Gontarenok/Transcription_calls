@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import date, datetime
 from threading import Lock
 
 from sqlalchemy import func, select
@@ -18,6 +18,7 @@ from .models import (
     TopicCatalogEntry,
     Transcription,
     User,
+    Weekly911Report,
 )
 
 
@@ -289,6 +290,8 @@ def get_calls_for_summarization(
     call_type_code: str,
     statuses: tuple[str, ...] = ("TRANSCRIBED", "SUMMARIZATION_FAILED"),
     limit: int = 200,
+    call_started_at_gte: datetime | None = None,
+    call_started_at_lt: datetime | None = None,
 ) -> list[Call]:
     stmt = (
         select(Call)
@@ -305,6 +308,10 @@ def get_calls_for_summarization(
         .order_by(Call.call_started_at.asc())
         .limit(limit)
     )
+    if call_started_at_gte is not None:
+        stmt = stmt.where(Call.call_started_at >= call_started_at_gte)
+    if call_started_at_lt is not None:
+        stmt = stmt.where(Call.call_started_at < call_started_at_lt)
     return list(db.scalars(stmt))
 
 
@@ -732,6 +739,108 @@ def list_calls_with_active_classification(
     )
     # join with classifications can duplicate rows; unique() keeps one Call entity per id
     return list(db.scalars(stmt).unique())
+
+
+def create_weekly_911_report(
+    db: Session,
+    *,
+    period_start: date,
+    period_end: date,
+    pipeline_run_id: int | None = None,
+) -> Weekly911Report:
+    row = Weekly911Report(
+        period_start=period_start,
+        period_end=period_end,
+        pipeline_run_id=pipeline_run_id,
+        status="RUNNING",
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def finalize_weekly_911_report(
+    db: Session,
+    *,
+    report_id: int,
+    status: str,
+    calls_in_period: int,
+    calls_summarized_in_period: int,
+    outcome_helped: int,
+    outcome_not_helped: int,
+    outcome_in_progress: int,
+    outcome_unknown: int,
+    task_text: str | None,
+    work_task_id: int | None,
+    excel_file_path: str | None,
+    error_message: str | None = None,
+) -> Weekly911Report | None:
+    row = db.get(Weekly911Report, report_id)
+    if not row:
+        return None
+    row.status = status
+    row.calls_in_period = calls_in_period
+    row.calls_summarized_in_period = calls_summarized_in_period
+    row.outcome_helped = outcome_helped
+    row.outcome_not_helped = outcome_not_helped
+    row.outcome_in_progress = outcome_in_progress
+    row.outcome_unknown = outcome_unknown
+    row.task_text = task_text
+    row.work_task_id = work_task_id
+    row.excel_file_path = excel_file_path
+    row.error_message = error_message
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def count_911_calls_in_range(
+    db: Session,
+    *,
+    start_utc: datetime,
+    end_utc_exclusive: datetime,
+) -> int:
+    stmt = (
+        select(func.count())
+        .select_from(Call)
+        .join(CallType, Call.call_type_id == CallType.id)
+        .where(
+            CallType.code == "911",
+            Call.call_started_at >= start_utc,
+            Call.call_started_at < end_utc_exclusive,
+        )
+    )
+    return int(db.scalar(stmt) or 0)
+
+
+def list_911_calls_summarized_in_range(
+    db: Session,
+    *,
+    start_utc: datetime,
+    end_utc_exclusive: datetime,
+    limit: int = 50_000,
+) -> list[Call]:
+    stmt = (
+        select(Call)
+        .join(CallType, Call.call_type_id == CallType.id)
+        .join(CallStatus, Call.status_id == CallStatus.id)
+        .options(
+            selectinload(Call.manager),
+            selectinload(Call.call_type),
+            selectinload(Call.transcriptions),
+            selectinload(Call.summarizations),
+        )
+        .where(
+            CallType.code == "911",
+            CallStatus.code == "SUMMARIZED",
+            Call.call_started_at >= start_utc,
+            Call.call_started_at < end_utc_exclusive,
+        )
+        .order_by(Call.call_started_at.asc())
+        .limit(limit)
+    )
+    return list(db.scalars(stmt))
 
 
 def create_pipeline_run(db: Session, *, started_at: datetime, status: str, pipeline_code: str) -> PipelineRun:

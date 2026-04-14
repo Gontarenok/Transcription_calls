@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from celery import shared_task
+from sqlalchemy.orm import Session
 
 from db.base import SessionLocal
 from db.crud import (
@@ -29,14 +30,19 @@ def _get_active_transcription(call) -> Any | None:
     return None
 
 
-@shared_task(name="jobs.summarize_911_batch", bind=True, acks_late=True)
-def summarize_911_batch(self, *, limit: int = 100) -> dict:
+def run_summarize_911_batch(
+    db: Session,
+    *,
+    limit: int = 100,
+    call_started_at_gte: datetime | None = None,
+    call_started_at_lt: datetime | None = None,
+) -> dict:
+    """Синхронная саммаризация 911 в БД (используется Celery и run_911_pipeline)."""
     start_ts = time.time()
     progress = {"processed": 0}
     skipped_no_transcription = 0
     skipped_empty_text = 0
 
-    db = SessionLocal()
     pipeline_run = create_pipeline_run(
         db,
         started_at=datetime.now(timezone.utc),
@@ -47,7 +53,13 @@ def summarize_911_batch(self, *, limit: int = 100) -> dict:
     try:
         get_text_generator()
 
-        calls = get_calls_for_summarization(db, call_type_code="911", limit=int(limit))
+        calls = get_calls_for_summarization(
+            db,
+            call_type_code="911",
+            limit=int(limit),
+            call_started_at_gte=call_started_at_gte,
+            call_started_at_lt=call_started_at_lt,
+        )
 
         for call in calls:
             transcription = _get_active_transcription(call)
@@ -110,6 +122,27 @@ def summarize_911_batch(self, *, limit: int = 100) -> dict:
         raise
     finally:
         unregister_active_pipeline(pipeline_run.id)
+
+
+@shared_task(name="jobs.summarize_911_batch", bind=True, acks_late=True)
+def summarize_911_batch(
+    self,
+    *,
+    limit: int = 100,
+    call_started_at_gte: str | None = None,
+    call_started_at_lt: str | None = None,
+) -> dict:
+    gte = datetime.fromisoformat(call_started_at_gte) if call_started_at_gte else None
+    lt = datetime.fromisoformat(call_started_at_lt) if call_started_at_lt else None
+    db = SessionLocal()
+    try:
+        return run_summarize_911_batch(
+            db,
+            limit=limit,
+            call_started_at_gte=gte,
+            call_started_at_lt=lt,
+        )
+    finally:
         db.close()
 
 

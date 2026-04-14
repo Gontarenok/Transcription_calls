@@ -13,7 +13,9 @@ from transformers import pipeline
 
 from model_paths import model_settings
 
-PROMPT_VERSION = "911-summarizer-v1"
+from summarization_llm.outcome_normalize import normalize_outcome_label
+
+PROMPT_VERSION = "911-summarizer-v2"
 _DEVICE = 0 if torch.cuda.is_available() else -1
 
 
@@ -66,6 +68,9 @@ def build_prompt(transcript_text: str) -> str:
     return f"""
 Ты — ассистент, который делает краткую структурированную выжимку звонка внутренней технической поддержки (911).
 Верни ответ СТРОГО в JSON без markdown и без пояснений вокруг.
+Контекст: компания «Металл Профиль»; ТП8 — модуль в 1С; 911 — линия техподдержки.
+Не додумывай факты. Если в звонке нет смысла (меньше ~10 слов, одни приветствия), для текстовых полей укажи коротко «Суть звонка не ясна», outcome — «не указано».
+
 Схема:
 {{
   "participants": "кто с кем разговаривает (если понятно, иначе null)",
@@ -73,8 +78,8 @@ def build_prompt(transcript_text: str) -> str:
   "topic": "краткая тема обращения",
   "essence": "суть проблемы (1-3 предложения)",
   "action_result": "какие действия предприняты/что сделали",
-  "outcome": "чем закончилось (если неизвестно — null)",
-  "short_summary": "1 предложение итоговой выжимки"
+  "outcome": "строго одно из строк (маленькими буквами): помогли | не помогли | в работе | не указано",
+  "short_summary": "1–2 предложения итоговой выжимки"
 }}
 
 Текст разговора:
@@ -98,7 +103,7 @@ def parse_summary(raw_llm: str) -> Summary:
         topic=_s("topic"),
         essence=_s("essence"),
         action_result=_s("action_result"),
-        outcome=_s("outcome"),
+        outcome=normalize_outcome_label(_s("outcome")),
         short_summary=_s("short_summary"),
         raw_text=raw_llm.strip()[:20000] if raw_llm else None,
     )
