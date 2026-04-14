@@ -10,7 +10,7 @@ from transformers import pipeline
 from db.base import SessionLocal
 from db.crud import list_topic_catalog_entries, set_catalog_qdrant_point_id, update_topic_catalog_entry
 from model_paths import model_settings
-from rag.catalog_service import qdrant_enabled, sync_catalog_entries
+from classification_rag.catalog_service import qdrant_enabled, sync_catalog_entries
 
 DEVICE = 0 if torch.cuda.is_available() else -1
 PROMPT_VERSION = "catalog-synonyms-v1"

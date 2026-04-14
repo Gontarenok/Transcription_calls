@@ -1,58 +1,25 @@
 from __future__ import annotations
 
-import json
-import re
 import time
-from dataclasses import dataclass
 from datetime import datetime, timezone
-from functools import lru_cache
 from typing import Any
 
-import torch
 from celery import shared_task
-from transformers import pipeline
 
 from db.base import SessionLocal
-from db.crud import add_summarization, create_pipeline_run, finish_pipeline_run, get_calls_for_summarization, set_call_status
+from db.crud import (
+    add_summarization,
+    create_pipeline_run,
+    finish_pipeline_run,
+    get_calls_for_summarization,
+    set_call_status,
+)
 from jobs.pipeline_lifecycle import register_active_pipeline, unregister_active_pipeline
 from model_paths import model_settings
+from summarization_llm import PROMPT_VERSION, get_text_generator, summarize_transcript_text
 
 
 PIPELINE_CODE = "911_SUMMARIZATION"
-PROMPT_VERSION = "911-summarizer-v1"
-DEVICE = 0 if torch.cuda.is_available() else -1
-
-
-@dataclass
-class Summary:
-    participants: str | None
-    platform: str | None
-    topic: str | None
-    essence: str | None
-    action_result: str | None
-    outcome: str | None
-    short_summary: str | None
-    raw_text: str | None
-
-
-@lru_cache(maxsize=1)
-def _generator():
-    gen = pipeline(
-        "text-generation",
-        model=model_settings.gemma_model_path,
-        tokenizer=model_settings.gemma_model_path,
-        device=DEVICE,
-        torch_dtype="auto",
-    )
-    try:
-        gc = gen.model.generation_config
-        if getattr(gc, "max_length", None) is not None:
-            gc.max_length = None
-        if hasattr(gc, "do_sample"):
-            gc.do_sample = False
-    except Exception:
-        pass
-    return gen
 
 
 def _get_active_transcription(call) -> Any | None:
@@ -62,63 +29,10 @@ def _get_active_transcription(call) -> Any | None:
     return None
 
 
-def _safe_json_load(raw: str) -> dict[str, Any] | None:
-    raw = (raw or "").strip()
-    if not raw:
-        return None
-    matches = list(re.finditer(r"\{.*?\}", raw, flags=re.S))
-    if not matches:
-        return None
-    try:
-        return json.loads(matches[-1].group(0))
-    except Exception:
-        return None
-
-
-def _build_prompt(transcript_text: str) -> str:
-    return f"""
-Ты — ассистент, который делает краткую структурированную выжимку звонка внутренней технической поддержки (911).
-Верни ответ СТРОГО в JSON без markdown и без пояснений вокруг.
-Схема:
-{{
-  "participants": "кто с кем разговаривает (если понятно, иначе null)",
-  "platform": "канал/система/продукт (если понятно, иначе null)",
-  "topic": "краткая тема обращения",
-  "essence": "суть проблемы (1-3 предложения)",
-  "action_result": "какие действия предприняты/что сделали",
-  "outcome": "чем закончилось (если неизвестно — null)",
-  "short_summary": "1 предложение итоговой выжимки"
-}}
-
-Текст разговора:
-{transcript_text}
-""".strip()
-
-
-def _parse_summary(raw_llm: str) -> Summary:
-    payload = _safe_json_load(raw_llm) or {}
-    def _s(key: str) -> str | None:
-        v = payload.get(key)
-        if v is None:
-            return None
-        text = str(v).strip()
-        return text or None
-    return Summary(
-        participants=_s("participants"),
-        platform=_s("platform"),
-        topic=_s("topic"),
-        essence=_s("essence"),
-        action_result=_s("action_result"),
-        outcome=_s("outcome"),
-        short_summary=_s("short_summary"),
-        raw_text=raw_llm.strip()[:20000] if raw_llm else None,
-    )
-
-
 @shared_task(name="jobs.summarize_911_batch", bind=True, acks_late=True)
 def summarize_911_batch(self, *, limit: int = 100) -> dict:
     start_ts = time.time()
-    processed = 0
+    progress = {"processed": 0}
     skipped_no_transcription = 0
     skipped_empty_text = 0
 
@@ -129,8 +43,10 @@ def summarize_911_batch(self, *, limit: int = 100) -> dict:
         status="RUNNING",
         pipeline_code=PIPELINE_CODE,
     )
+    register_active_pipeline(pipeline_run.id, lambda: int(progress["processed"]))
     try:
-        gen = _generator()
+        get_text_generator()
+
         calls = get_calls_for_summarization(db, call_type_code="911", limit=int(limit))
 
         for call in calls:
@@ -144,9 +60,7 @@ def summarize_911_batch(self, *, limit: int = 100) -> dict:
 
             set_call_status(db, call.id, "SUMMARIZING", error_message=None)
             try:
-                prompt = _build_prompt(transcription.text.strip())
-                raw = gen(prompt, max_new_tokens=420, do_sample=False, return_full_text=False)[0]["generated_text"]
-                summary = _parse_summary(raw)
+                summary = summarize_transcript_text(transcription.text.strip())
                 add_summarization(
                     db,
                     call_id=call.id,
@@ -172,14 +86,14 @@ def summarize_911_batch(self, *, limit: int = 100) -> dict:
             pipeline_run_id=pipeline_run.id,
             status="SUCCESS",
             finished_at=datetime.now(timezone.utc),
-            processed_calls=int(processed),
+            processed_calls=int(progress["processed"]),
             duration_seconds=int(time.time() - start_ts),
             error_message=None,
         )
         return {
             "status": "ok",
             "pipeline_run_id": pipeline_run.id,
-            "processed": processed,
+            "processed": progress["processed"],
             "skipped_no_transcription": skipped_no_transcription,
             "skipped_empty_text": skipped_empty_text,
         }
@@ -203,4 +117,3 @@ def summarize_911_batch(self, *, limit: int = 100) -> dict:
 def summarize_enqueue_pending(self, *, limit: int = 100) -> dict:
     res = summarize_911_batch.delay(limit=limit)
     return {"status": "enqueued", "task_id": res.id, "limit": int(limit)}
-

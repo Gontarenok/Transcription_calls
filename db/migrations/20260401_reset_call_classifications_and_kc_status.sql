@@ -1,7 +1,7 @@
 -- Reset test classification runs: empty call_classifications and return КЦ calls to TRANSCRIBED
 --
 -- Context:
--- - Scripts rag/classify_calls.py and rag/classify_calls_v2.py select calls with status IN
+-- - Scripts classification_rag/classify_calls.py and classification_rag/classify_calls_v2.py select calls with status IN
 --   ('TRANSCRIBED', 'CLASSIFICATION_FAILED') by default (see db/crud.get_calls_for_classification).
 -- - During a run they set status CLASSIFYING, then CLASSIFIED (or CLASSIFICATION_FAILED on error).
 --

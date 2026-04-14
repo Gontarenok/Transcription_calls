@@ -22,7 +22,7 @@ from db.crud import (
 )
 from jobs.pipeline_lifecycle import register_active_pipeline, unregister_active_pipeline
 from model_paths import model_settings
-from rag.classify_calls_v2 import (
+from classification_rag.classify_calls_v2 import (
     Candidate,
     build_prompt,
     choose_result,
@@ -33,7 +33,7 @@ from rag.classify_calls_v2 import (
     retrieve_candidates,
     score_candidates_legacy,
 )
-from rag.catalog_service import init_qdrant
+from classification_rag.catalog_service import init_qdrant
 
 
 PIPELINE_CODE = "КЦ_CLASSIFICATION"
@@ -65,7 +65,7 @@ def _get_active_transcription(call) -> Any | None:
 def classify_kc_batch(self, *, limit: int = 200, debug_dir: str | None = None) -> dict:
     """
     Classify a batch of KC calls with statuses TRANSCRIBED/CLASSIFICATION_FAILED.
-    Uses the same logic as rag/classify_calls_v2.py but runs as a Celery job.
+    Uses the same logic as classification_rag/classify_calls_v2.py but runs as a Celery job.
     """
     start_ts = time.time()
     progress = {"processed": 0}
@@ -86,7 +86,7 @@ def classify_kc_batch(self, *, limit: int = 200, debug_dir: str | None = None) -
         catalog_entries = get_active_catalog_entries(db)
         catalog_map = {e.id: e for e in catalog_entries}
         if not catalog_map:
-            raise RuntimeError("Catalog is empty. Run rag/sync_topic_catalog.py first.")
+            raise RuntimeError("Catalog is empty. Run classification_rag/sync_topic_catalog.py first.")
 
         qdrant = init_qdrant()
         embedder = _embedder()

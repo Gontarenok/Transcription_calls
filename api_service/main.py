@@ -44,7 +44,7 @@ from db.crud import (
     upsert_topic_catalog_entry,
 )
 from db.models import Call, CallClassification, CallStatus, CallType, PipelineRun, TopicCatalogEntry, Transcription, User
-from rag.catalog_service import entry_source_hash, sync_catalog_entries
+from classification_rag.catalog_service import entry_source_hash, sync_catalog_entries
 
 setup_logging()
 

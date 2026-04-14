@@ -29,7 +29,7 @@ from db.crud import (
 )
 from db.models import TopicCatalogEntry
 from model_paths import model_settings
-from rag.catalog_service import init_qdrant
+from classification_rag.catalog_service import init_qdrant
 
 PIPELINE_CODE = "КЦ_CLASSIFICATION"
 PROMPT_VERSION = "kc-topic-classifier-v2-legacy-retrieval"
@@ -37,7 +37,7 @@ CLASSIFIER_VERSION = "hybrid-rag-legacy-retrieval-2026-03-30"
 
 DEVICE = 0 if torch.cuda.is_available() else -1
 
-# --- Retrieval/scoring scheme ported from rag/old/rag_summary_with_qdrant_final_3.py ---
+# --- Retrieval/scoring scheme ported from classification_rag/old/rag_summary_with_qdrant_final_3.py ---
 TOP_K = 8
 SHORT_TEXT_LEN = 300
 
@@ -396,7 +396,7 @@ def main():
         catalog_entries = get_active_catalog_entries(db)
         catalog_map = {entry.id: entry for entry in catalog_entries}
         if not catalog_map:
-            raise SystemExit("Справочник тем пуст. Сначала выполните rag/sync_topic_catalog.py")
+            raise SystemExit("Справочник тем пуст. Сначала выполните classification_rag/sync_topic_catalog.py")
 
         qdrant = init_qdrant()
         embedder = SentenceTransformer(model_settings.embedding_model_path)

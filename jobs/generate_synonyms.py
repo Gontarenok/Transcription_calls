@@ -10,8 +10,8 @@ from transformers import pipeline
 from db.base import SessionLocal
 from db.crud import get_topic_catalog_entry, set_catalog_qdrant_point_id, update_topic_catalog_entry
 from model_paths import model_settings
-from rag.catalog_service import qdrant_enabled, sync_catalog_entries
-from rag.generate_catalog_synonyms import build_prompt, parse_json_list
+from classification_rag.catalog_service import qdrant_enabled, sync_catalog_entries
+from classification_rag.generate_catalog_synonyms import build_prompt, parse_json_list
 
 
 DEVICE = 0 if torch.cuda.is_available() else -1

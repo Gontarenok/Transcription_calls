@@ -19,11 +19,15 @@
 
 ## 1. Подготовка окружения
 
-1. Python **3.11**.
+1. Python **3.11** (или **≥3.8**; пакет `prometheus-fastapi-instrumentator` 7.x не ставится на Python 3.7).
 2. `pip install -r requirements.txt`
 3. Скопируйте `.env.example` в `.env` и заполните значения.
 
 Если pip ругается на `\x00` в `requirements.txt` — файл сохранён как **UTF-16**; пересохраните в **UTF-8**.
+
+Если при установке **ReadTimeout** / `No matching distribution found` для пакетов с PyPI — увеличьте таймаут и повторите:  
+`pip install --default-timeout=120 -r requirements.txt`  
+(при нестабильной сети можно указать зеркало индекса через `pip.conf` или переменную `PIP_INDEX_URL`).
 
 ---
 
@@ -121,7 +125,7 @@ docker compose up -d --build
 
 ## 8. RAG, классификация, миграции
 
-- RAG и каталог: `README_ARCHITECT.md`, `rag/README.md`.
+- Классификация КЦ (RAG) и каталог: `README_ARCHITECT.md`, `classification_rag/README.md`. Саммаризация 911: `summarization_llm/README.md`.
 - **Сканирование папок (КЦ / 911):** длительность файлов считается в `audio_utils.py` — предпочтительно **`ffprobe`** в PATH (входит в состав ffmpeg, есть в Docker-образе приложения); иначе soundfile / librosa. Это сильно влияет на время этапа `scan` на больших объёмах mp3/m4a.
 - **БД при скане:** кэшируются id статусов звонка (`get_call_status_by_code`), пересчёт `parts_count` / длительности по частям — агрегатами SQL без загрузки всех строк `call_parts` (`refresh_call_rollups`).
 - Миграции PostgreSQL: `db/migrations/*.sql` — порядок и однократные скрипты см. комментарии в файлах.

@@ -29,7 +29,7 @@ from db.crud import (
 )
 from db.models import TopicCatalogEntry
 from model_paths import model_settings
-from rag.catalog_service import init_qdrant
+from classification_rag.catalog_service import init_qdrant
 
 PIPELINE_CODE = "КЦ_CLASSIFICATION"
 PROMPT_VERSION = "kc-topic-classifier-v1"
@@ -439,7 +439,7 @@ def main():
         catalog_entries = get_active_catalog_entries(db)
         catalog_map = {entry.id: entry for entry in catalog_entries}
         if not catalog_map:
-            raise SystemExit("Справочник тем пуст. Сначала выполните rag/sync_topic_catalog.py")
+            raise SystemExit("Справочник тем пуст. Сначала выполните classification_rag/sync_topic_catalog.py")
 
         qdrant = init_qdrant()
         embedder = SentenceTransformer(model_settings.embedding_model_path)

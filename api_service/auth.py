@@ -365,6 +365,15 @@ def get_current_identity_ui(request: Request) -> UiIdentity:
             session = getattr(request, "session", None) or {}
             if session.get("username") and session.get("role"):
                 return identity_from_session(session)
+            raise HTTPException(
+                status_code=401,
+                detail=(
+                    "Нет учётных данных от прокси (заголовок X-Forwarded-Login) и нет cookie-сессии после входа. "
+                    "Если входите суперпользователем по форме: при доступе по HTTP задайте SESSION_COOKIE_SECURE=0, "
+                    "открывайте тот же host/port, убедитесь что прокси не удаляет cookie. "
+                    "В проде без суперпользователя открывайте URL через портал, который подставляет заголовки."
+                ),
+            )
         return identity_from_trusted_headers(request)
 
     session = getattr(request, "session", None) or {}

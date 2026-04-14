@@ -78,11 +78,14 @@
 - `/catalog`, `/api/catalog` (ADMIN),
 - `/pipeline-runs`, `/api/pipeline-runs` (ADMIN).
 
-### C) RAG Layer
-Основной production-поток:
-1. `rag/sync_topic_catalog.py` — импорт и синхронизация справочника в Qdrant,
-2. `rag/classify_calls.py` — классификация звонков,
-3. `rag/generate_catalog_synonyms.py` (опционально) — помощь в заполнении синонимов.
+### C) Classification RAG (КЦ)
+Основной production-поток классификации контакт-центра:
+1. `classification_rag/sync_topic_catalog.py` — импорт и синхронизация справочника в Qdrant,
+2. `classification_rag/classify_calls.py` (или Celery `jobs.classify_calls`) — классификация звонков,
+3. `classification_rag/generate_catalog_synonyms.py` (опционально) — помощь в заполнении синонимов.
+
+### D) Summarization LLM (911)
+Саммаризация транскриптов 911: код модели и промпта в `summarization_llm/`, постановка задач и запись в БД — `jobs/summarize_911.py` (таблица `summarizations`). Отчёты Excel / Work — отдельные доработки пайплайна.
 
 ---
 
@@ -94,7 +97,7 @@
 3. Whisper создаёт `Transcription` и помечает статус звонка.
 
 ## 4.2 Подготовка справочника
-1. Бизнес-файл `rag/reference_topics.txt` конвертируется и загружается в `topic_catalog_entries`.
+1. Бизнес-файл `classification_rag/reference_topics.txt` конвертируется и загружается в `topic_catalog_entries`.
 2. Каждая запись синхронизируется как вектор в Qdrant.
 3. Для отсутствующих в новом источнике пар тема/подтема запись в БД деактивируется.
 
@@ -105,7 +108,11 @@
 4. Gemma выбирает единственный результат из shortlist или `OTHER`.
 5. Результат сохраняется в `call_classifications`, статус звонка обновляется.
 
-## 4.4 Витрины и экспорт
+## 4.4 Саммаризация (911)
+1. После транскрибации для типа звонка 911 выбираются кандидаты (статус `TRANSCRIBED`, нет активной записи в `summarizations` — см. `get_calls_for_summarization`).
+2. Celery-задача `jobs.summarize_911_batch` вызывает Gemma через `summarization_llm`, пишет строку в `summarizations`, статус звонка `SUMMARIZED` или `SUMMARIZATION_FAILED`.
+
+## 4.5 Витрины и экспорт
 1. UI/API отдают активную транскрипцию и активную классификацию.
 2. Excel-экспорт содержит тему/подтему, длительность, части, транскрипцию.
 
@@ -161,9 +168,9 @@
    - `python db/verify_db_contract.py`
    - `python db/test_crud.py`
 4. Синхронизировать справочник:
-   - `python rag/sync_topic_catalog.py`
+   - `python classification_rag/sync_topic_catalog.py`
 5. Выполнить тест-классификацию:
-   - `python rag/classify_calls.py --call-type КЦ --limit 20`
+   - `python classification_rag/classify_calls.py --call-type КЦ --limit 20`
 6. Проверить UI/экспорт:
    - `/calls`, `/classified-calls`, `/catalog`, `/api/calls/export.xlsx`.
 

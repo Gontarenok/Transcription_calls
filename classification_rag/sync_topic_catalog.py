@@ -10,7 +10,7 @@ from db.crud import (
     set_catalog_qdrant_point_id,
     upsert_topic_catalog_entry,
 )
-from rag.catalog_service import build_doc_text, entry_source_hash, sync_catalog_entries
+from classification_rag.catalog_service import build_doc_text, entry_source_hash, sync_catalog_entries
 
 
 def load_records_from_spravochnik_json(spravochnik_path: Path) -> list[dict]:
