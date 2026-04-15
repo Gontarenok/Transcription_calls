@@ -1,11 +1,13 @@
 """
-Пайплайн 911: скан + транскрибация в БД; опционально еженедельный режим
-(саммари в БД, Excel из БД, мини-отчёт, задача в Work).
+Пайплайн 911: режимы ``scan`` | ``transcribe`` | ``summarize`` | ``full`` (по умолчанию).
 
-Полный цикл (транскрибация → саммари в БД → Excel → Work): ``python run_911_pipeline.py --weekly``
-или то же самое: ``python run_911_pipeline.py --full``
+- **full** — скан → транскрибация → саммари за отчётную неделю → Excel → Work.
+- **scan** — только сканирование папки и запись метаданных в БД.
+- **transcribe** — только транскрибация уже известных звонков (нужен предварительный scan).
+- **summarize** — только саммари + Excel + Work за период (без аудио-шагов).
 
-Только транскрибация в БД: ``python run_911_pipeline.py`` (без флагов).
+Примеры: ``python run_911_pipeline.py`` (full), ``python run_911_pipeline.py --mode scan``,
+``python run_911_pipeline.py --mode summarize --skip-work``.
 """
 
 from __future__ import annotations
@@ -21,7 +23,6 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 from db.base import SessionLocal
-from db.models import PipelineRun
 from db.crud import (
     count_911_calls_in_range,
     create_pipeline_run,
@@ -30,6 +31,7 @@ from db.crud import (
     finish_pipeline_run,
     list_911_calls_summarized_in_range,
 )
+from db.models import PipelineRun
 from jobs.summarize_911 import run_summarize_911_batch
 from summarization_llm.excel_from_db import export_911_calls_to_excel
 from summarization_llm.report_week_range import period_to_utc_half_open, previous_iso_week_mon_sun
@@ -37,7 +39,6 @@ from summarization_llm.weekly_stats import aggregate_outcomes_for_calls, build_w
 from summarization_llm.work_client import upload_weekly_911_task
 
 N911_ROOT = r"C:\Audio_share\Night"
-N911_MODE = "all"
 N911_MODEL = "medium"
 N911_LIMIT = 10000
 N911_RECURSIVE = False
@@ -120,22 +121,52 @@ def _parse_date(s: str) -> date:
     return date.fromisoformat(s.strip())
 
 
+def _build_process_911_cmd(
+    *,
+    root: Path,
+    audio_root: str,
+    process_mode: str,
+    pipeline_run_id: int | None,
+) -> list[str]:
+    cmd = [
+        sys.executable,
+        str(root / "process_911_calls_spikers.py"),
+        "--root",
+        audio_root,
+        "--mode",
+        process_mode,
+        "--model",
+        N911_MODEL,
+        "--limit",
+        str(N911_LIMIT),
+    ]
+    if pipeline_run_id is not None:
+        cmd.extend(["--pipeline-run-id", str(pipeline_run_id)])
+    if N911_RECURSIVE:
+        cmd.append("--recursive")
+    return cmd
+
+
 def main() -> None:
     pipeline_t0 = time.time()
 
     parser = argparse.ArgumentParser(
-        description="Пайплайн 911: по умолчанию только транскрибация в БД; --weekly / --full — весь цикл до Work.",
+        description="Пайплайн 911: режимы scan / transcribe / summarize / full (полный цикл по умолчанию).",
     )
     parser.add_argument(
-        "--weekly",
-        "--full",
-        action="store_true",
-        dest="weekly",
-        help="После транскрибации: саммари за отчётную неделю в БД, Excel из БД, задача в Work",
+        "--mode",
+        choices=("full", "scan", "transcribe", "summarize"),
+        default="full",
+        help="full = scan+transcribe+саммари+Excel+Work; остальные — отдельные этапы",
     )
-    parser.add_argument("--period-start", type=str, default=None, help="YYYY-MM-DD (с --weekly; иначе предыдущая пн–вс)")
+    parser.add_argument(
+        "--period-start",
+        type=str,
+        default=None,
+        help="YYYY-MM-DD для саммари/отчёта (с full и summarize; иначе предыдущая пн–вс)",
+    )
     parser.add_argument("--period-end", type=str, default=None, help="YYYY-MM-DD")
-    parser.add_argument("--skip-work", action="store_true", help="Не создавать задачу в Work")
+    parser.add_argument("--skip-work", action="store_true", help="Не создавать задачу в Work (full/summarize)")
     parser.add_argument("--summarize-limit", type=int, default=50_000, help="Макс. звонков на шаг саммари")
     parser.add_argument("--root", type=str, default=N911_ROOT, help="Каталог с аудио 911")
     args = parser.parse_args()
@@ -151,14 +182,14 @@ def main() -> None:
         handlers=[logging.FileHandler(log_filename, encoding="utf-8"), logging.StreamHandler(sys.stdout)],
     )
 
-    print(f"Скрипт 911 запущен: {time.strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"Скрипт 911 (режим={args.mode}) запущен: {time.strftime('%Y-%m-%d %H:%M:%S')}")
 
     period_start: date | None = None
     period_end: date | None = None
     weekly_report_id: int | None = None
     orchestrator_id: int | None = None
 
-    if args.weekly:
+    if args.mode in ("full", "summarize"):
         if args.period_start and args.period_end:
             period_start = _parse_date(args.period_start)
             period_end = _parse_date(args.period_end)
@@ -166,7 +197,7 @@ def main() -> None:
             raise SystemExit("Задайте обе даты: --period-start и --period-end")
         else:
             period_start, period_end = previous_iso_week_mon_sun()
-        logging.info("Отчётная неделя: %s — %s", period_start, period_end)
+        logging.info("Отчётный период (саммари/Excel): %s — %s", period_start, period_end)
         db_o = SessionLocal()
         try:
             orch = create_pipeline_run(
@@ -186,40 +217,39 @@ def main() -> None:
         finally:
             db_o.close()
 
-    transcribe_run_id = create_transcribe_pipeline_run()
+    transcribe_run_id: int | None = None
     processed_calls, total_audio_seconds, avg_rtf = 0, 0.0, None
     summarize_processed = 0
 
     try:
-        cmd = [
-            sys.executable,
-            str(root / "process_911_calls_spikers.py"),
-            "--root",
-            args.root,
-            "--mode",
-            N911_MODE,
-            "--model",
-            N911_MODEL,
-            "--limit",
-            str(N911_LIMIT),
-            "--pipeline-run-id",
-            str(transcribe_run_id),
-        ]
-        if N911_RECURSIVE:
-            cmd.append("--recursive")
+        if args.mode in ("scan", "full"):
+            cmd = _build_process_911_cmd(
+                root=root,
+                audio_root=args.root,
+                process_mode="scan",
+                pipeline_run_id=None,
+            )
+            run_step("Сканирование (реестр звонков 911 в БД)", cmd)
 
-        output_lines = run_step("Сканирование и транскрибация звонков 911", cmd)
-        processed_calls, total_audio_seconds, avg_rtf = parse_stats(output_lines)
+        if args.mode in ("transcribe", "full"):
+            transcribe_run_id = create_transcribe_pipeline_run()
+            cmd = _build_process_911_cmd(
+                root=root,
+                audio_root=args.root,
+                process_mode="transcribe",
+                pipeline_run_id=transcribe_run_id,
+            )
+            output_lines = run_step("Транскрибация звонков 911", cmd)
+            processed_calls, total_audio_seconds, avg_rtf = parse_stats(output_lines)
+            finalize_transcribe_pipeline_run(
+                transcribe_run_id,
+                status="SUCCESS",
+                processed_calls=processed_calls,
+                total_audio_seconds=total_audio_seconds,
+                avg_rtf=avg_rtf,
+            )
 
-        finalize_transcribe_pipeline_run(
-            transcribe_run_id,
-            status="SUCCESS",
-            processed_calls=processed_calls,
-            total_audio_seconds=total_audio_seconds,
-            avg_rtf=avg_rtf,
-        )
-
-        if args.weekly and period_start and period_end and weekly_report_id is not None:
+        if args.mode in ("full", "summarize") and period_start and period_end and weekly_report_id is not None:
             start_utc, end_utc_excl = period_to_utc_half_open(period_start, period_end)
             db_s = SessionLocal()
             try:
@@ -286,14 +316,15 @@ def main() -> None:
         print(f"Скрипт 911 завершён за: {timedelta(seconds=int(elapsed))}")
     except Exception as exc:
         logging.exception("911 pipeline ошибка: %s", exc)
-        finalize_transcribe_pipeline_run(
-            transcribe_run_id,
-            status="FAILED",
-            processed_calls=processed_calls,
-            total_audio_seconds=total_audio_seconds,
-            avg_rtf=avg_rtf,
-            error_message=str(exc),
-        )
+        if transcribe_run_id is not None:
+            finalize_transcribe_pipeline_run(
+                transcribe_run_id,
+                status="FAILED",
+                processed_calls=processed_calls,
+                total_audio_seconds=total_audio_seconds,
+                avg_rtf=avg_rtf,
+                error_message=str(exc),
+            )
         if weekly_report_id is not None and orchestrator_id is not None:
             db_e = SessionLocal()
             try:
