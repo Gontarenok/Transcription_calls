@@ -30,6 +30,7 @@ from db.crud import (
     finalize_weekly_911_report,
     finish_pipeline_run,
     list_911_calls_summarized_in_range,
+    update_pipeline_run_transcribe_stats,
 )
 from db.models import PipelineRun
 from jobs.summarize_911 import run_summarize_911_batch
@@ -42,8 +43,7 @@ N911_ROOT = r"C:\Audio_share\Night"
 N911_MODEL = "medium"
 N911_LIMIT = 10000
 N911_RECURSIVE = False
-PIPELINE_CODE_TRANSCRIBE = "911"
-PIPELINE_CODE_WEEKLY = "911_WEEKLY"
+PIPELINE_CODE = "911"
 
 os.environ["PYTHONUTF8"] = "1"
 
@@ -55,7 +55,7 @@ def create_transcribe_pipeline_run() -> int:
             db,
             started_at=datetime.now(timezone.utc),
             status="RUNNING",
-            pipeline_code=PIPELINE_CODE_TRANSCRIBE,
+            pipeline_code=PIPELINE_CODE,
         )
         return run.id
     finally:
@@ -204,7 +204,7 @@ def main() -> None:
                 db_o,
                 started_at=datetime.now(timezone.utc),
                 status="RUNNING",
-                pipeline_code=PIPELINE_CODE_WEEKLY,
+                pipeline_code=PIPELINE_CODE,
             )
             orchestrator_id = orch.id
             wr = create_weekly_911_report(
@@ -232,7 +232,11 @@ def main() -> None:
             run_step("Сканирование (реестр звонков 911 в БД)", cmd)
 
         if args.mode in ("transcribe", "full"):
-            transcribe_run_id = create_transcribe_pipeline_run()
+            if args.mode == "full":
+                transcribe_run_id = orchestrator_id
+            else:
+                transcribe_run_id = create_transcribe_pipeline_run()
+            assert transcribe_run_id is not None
             cmd = _build_process_911_cmd(
                 root=root,
                 audio_root=args.root,
@@ -241,13 +245,26 @@ def main() -> None:
             )
             output_lines = run_step("Транскрибация звонков 911", cmd)
             processed_calls, total_audio_seconds, avg_rtf = parse_stats(output_lines)
-            finalize_transcribe_pipeline_run(
-                transcribe_run_id,
-                status="SUCCESS",
-                processed_calls=processed_calls,
-                total_audio_seconds=total_audio_seconds,
-                avg_rtf=avg_rtf,
-            )
+            if args.mode == "full":
+                db_tr = SessionLocal()
+                try:
+                    update_pipeline_run_transcribe_stats(
+                        db_tr,
+                        pipeline_run_id=transcribe_run_id,
+                        processed_calls=processed_calls,
+                        total_audio_seconds=total_audio_seconds,
+                        avg_rtf=avg_rtf,
+                    )
+                finally:
+                    db_tr.close()
+            else:
+                finalize_transcribe_pipeline_run(
+                    transcribe_run_id,
+                    status="SUCCESS",
+                    processed_calls=processed_calls,
+                    total_audio_seconds=total_audio_seconds,
+                    avg_rtf=avg_rtf,
+                )
 
         if args.mode in ("full", "summarize") and period_start and period_end and weekly_report_id is not None:
             start_utc, end_utc_excl = period_to_utc_half_open(period_start, period_end)
@@ -258,6 +275,7 @@ def main() -> None:
                     limit=args.summarize_limit,
                     call_started_at_gte=start_utc,
                     call_started_at_lt=end_utc_excl,
+                    reuse_pipeline_run_id=orchestrator_id,
                 )
                 summarize_processed = int(sum_result.get("processed") or 0)
             finally:

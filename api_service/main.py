@@ -3,9 +3,11 @@ from __future__ import annotations
 import os
 from datetime import date, datetime, time, timedelta, timezone
 from io import BytesIO
+from pathlib import Path
 from urllib.parse import urlencode
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Query, Request
+from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from openpyxl import Workbook
@@ -28,6 +30,7 @@ from api_service.auth import (
     allowed_call_types_for_role,
     get_current_role,
     get_current_identity_ui,
+    identity_sees_911_summarization,
     identity_sees_kc_classification,
     menu_context,
     ui_login_authenticate,
@@ -37,7 +40,12 @@ from jobs.generate_synonyms import catalog_generate_synonyms
 from db.base import SessionLocal
 from db.crud import (
     count_calls_with_active_classification,
+    count_calls_with_latest_summarization_911,
     list_calls_with_active_classification,
+    list_calls_with_latest_summarization_911,
+    list_distinct_latest_summary_outcomes_911,
+    list_distinct_latest_summary_topics_911,
+    list_manager_names_for_summarized_911_filters,
     list_topic_catalog_entries,
     set_catalog_qdrant_point_id,
     update_topic_catalog_entry,
@@ -50,6 +58,10 @@ setup_logging()
 
 app = FastAPI(title="Audio Calls API", version="0.6.0")
 templates = Jinja2Templates(directory="api_service/templates")
+
+_static_dir = Path(__file__).resolve().parent / "static"
+if _static_dir.is_dir():
+    app.mount("/static", StaticFiles(directory=str(_static_dir)), name="static")
 
 app.add_middleware(
     SessionMiddleware,
@@ -143,6 +155,34 @@ def _classified_list_querystring(
         q["topic"] = topic
     if subtopic:
         q["subtopic"] = subtopic
+    return urlencode(q)
+
+
+def _summarized_list_querystring(
+    *,
+    period: str | None,
+    date_from: str | None,
+    date_to: str | None,
+    manager: str | None,
+    topic: str | None,
+    outcome: str | None,
+    offset: int,
+) -> str:
+    q: dict[str, str] = {}
+    if offset > 0:
+        q["offset"] = str(offset)
+    if period:
+        q["period"] = period
+    if date_from:
+        q["date_from"] = date_from
+    if date_to:
+        q["date_to"] = date_to
+    if manager:
+        q["manager"] = manager
+    if topic:
+        q["topic"] = topic
+    if outcome:
+        q["outcome"] = outcome
     return urlencode(q)
 
 
@@ -289,6 +329,13 @@ def get_active_classification(call: Call):
     return next((c for c in call.classifications if c.is_active), None)
 
 
+def get_latest_summarization(call: Call):
+    sums = getattr(call, "summarizations", None) or []
+    if not sums:
+        return None
+    return max(sums, key=lambda s: s.id)
+
+
 def safe_parts_count(call: Call) -> int:
     return getattr(call, "parts_count", 1)
 
@@ -296,6 +343,7 @@ def safe_parts_count(call: Call) -> int:
 def call_to_out(call: Call, include_text: bool) -> CallOut:
     active_trans = get_active_transcription(call)
     active_class = get_active_classification(call)
+    latest_sum = get_latest_summarization(call)
     return CallOut(
         id=call.id,
         octell_call_id=call.octell_call_id,
@@ -313,6 +361,9 @@ def call_to_out(call: Call, include_text: bool) -> CallOut:
         subtopic=active_class.subtopic_name if active_class else None,
         classification_confidence=active_class.confidence if active_class else None,
         classification_reason=active_class.reasoning if active_class else None,
+        summary_topic=latest_sum.topic if latest_sum else None,
+        summary_outcome=latest_sum.outcome if latest_sum else None,
+        summary_short=latest_sum.short_summary if latest_sum else None,
     )
 
 
@@ -626,6 +677,108 @@ def classified_calls_ui(
                 "managers": managers,
                 "topic_options": topic_options,
                 "subtopic_options": subtopic_options,
+            },
+        )
+    finally:
+        db.close()
+
+
+@app.get("/summarized-calls", response_class=HTMLResponse)
+def summarized_calls_ui(
+    request: Request,
+    identity: UiIdentity = Depends(get_current_identity_ui),
+    period: str | None = Query(default=None),
+    date_from: str | None = Query(default=None),
+    date_to: str | None = Query(default=None),
+    manager: str | None = Query(default=None),
+    topic: str | None = Query(default=None),
+    outcome: str | None = Query(default=None),
+    offset: int = Query(default=0, ge=0),
+):
+    if not identity_sees_911_summarization(identity):
+        raise HTTPException(status_code=403, detail="Нет доступа к саммаризации 911")
+
+    role = identity.role
+    final_from, final_to, date_error = choose_date_range(period, date_from, date_to)
+    db = SessionLocal()
+    try:
+        page_size = _UI_PAGE_SIZE
+        total = count_calls_with_latest_summarization_911(
+            db,
+            date_from=final_from,
+            date_to=final_to,
+            manager=manager,
+            topic=topic,
+            outcome=outcome,
+        )
+        if total > 0:
+            max_offset = max(0, (total - 1) // page_size * page_size)
+            if offset > max_offset:
+                offset = max_offset
+        calls = list_calls_with_latest_summarization_911(
+            db,
+            limit=page_size,
+            offset=offset,
+            date_from=final_from,
+            date_to=final_to,
+            manager=manager,
+            topic=topic,
+            outcome=outcome,
+            load_transcription_text=False,
+        )
+        rows = [call_to_out(c, include_text=False) for c in calls]
+        list_volume_notice = total > _UI_LIST_SOFT_CAP
+        pager = {
+            "total": total,
+            "offset": offset,
+            "page_size": page_size,
+            "from_row": offset + 1 if rows else 0,
+            "to_row": offset + len(rows),
+            "prev_href": f"/summarized-calls?{_summarized_list_querystring(period=period, date_from=date_from, date_to=date_to, manager=manager, topic=topic, outcome=outcome, offset=max(0, offset - page_size))}"
+            if offset > 0
+            else None,
+            "next_href": f"/summarized-calls?{_summarized_list_querystring(period=period, date_from=date_from, date_to=date_to, manager=manager, topic=topic, outcome=outcome, offset=offset + page_size)}"
+            if offset + len(rows) < total
+            else None,
+        }
+
+        topic_options = list_distinct_latest_summary_topics_911(db)
+        outcome_options = list_distinct_latest_summary_outcomes_911(db)
+        managers = list_manager_names_for_summarized_911_filters(
+            db,
+            date_from=final_from,
+            date_to=final_to,
+            topic=topic,
+            outcome=outcome,
+        )
+
+        return templates.TemplateResponse(
+            "summarized_calls.html",
+            {
+                "request": request,
+                "rows": rows,
+                "role": role,
+                "show_header": True,
+                "active_page": "summarized_calls",
+                "can_see_classification": identity_sees_kc_classification(identity),
+                "catalog_access": identity.catalog_access,
+                "pipeline_admin": identity.pipeline_admin,
+                "date_error": date_error,
+                "menu": menu_context("summarized_calls", identity),
+                "filters": {
+                    "period": period or "",
+                    "date_from": date_from or "",
+                    "date_to": date_to or "",
+                    "manager": manager or "",
+                    "topic": topic or "",
+                    "outcome": outcome or "",
+                },
+                "pager": pager,
+                "list_volume_notice": list_volume_notice,
+                "list_soft_cap": _UI_LIST_SOFT_CAP,
+                "managers": managers,
+                "topic_options": topic_options,
+                "outcome_options": outcome_options,
             },
         )
     finally:
@@ -994,6 +1147,128 @@ def export_classified_calls_excel_ui(
         manager=manager,
         topic=topic,
         subtopic=subtopic,
+    )
+
+
+def _export_summarized_911_excel_response(
+    *,
+    scope_911: bool,
+    period: str | None,
+    date_from: str | None,
+    date_to: str | None,
+    manager: str | None,
+    topic: str | None,
+    outcome: str | None,
+) -> StreamingResponse:
+    if not scope_911:
+        raise HTTPException(status_code=403, detail="Нет доступа к саммаризации 911")
+
+    final_from, final_to, date_error = choose_date_range(period, date_from, date_to)
+    if date_error:
+        raise HTTPException(status_code=400, detail=date_error)
+
+    db = SessionLocal()
+    try:
+        calls = list_calls_with_latest_summarization_911(
+            db,
+            limit=200_000,
+            offset=0,
+            date_from=final_from,
+            date_to=final_to,
+            manager=manager,
+            topic=topic,
+            outcome=outcome,
+            load_transcription_text=True,
+        )
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Summarized 911"
+        ws.append(
+            [
+                "ID",
+                "Octell ID",
+                "Manager",
+                "Started",
+                "Duration",
+                "Parts",
+                "Topic (summary)",
+                "Outcome",
+                "Short summary",
+                "Transcription",
+            ]
+        )
+
+        for c in calls:
+            active_trans = get_active_transcription(c)
+            latest_sum = get_latest_summarization(c)
+            ws.append(
+                [
+                    c.id,
+                    c.octell_call_id,
+                    c.manager.full_name if c.manager else None,
+                    c.call_started_at.isoformat() if c.call_started_at else None,
+                    c.duration_seconds,
+                    safe_parts_count(c),
+                    latest_sum.topic if latest_sum else None,
+                    latest_sum.outcome if latest_sum else None,
+                    latest_sum.short_summary if latest_sum else None,
+                    active_trans.text if active_trans else None,
+                ]
+            )
+
+        bio = BytesIO()
+        wb.save(bio)
+        bio.seek(0)
+        return StreamingResponse(
+            bio,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": 'attachment; filename="summarized_911_calls.xlsx"'},
+        )
+    finally:
+        db.close()
+
+
+@app.get("/api/summarized-calls/export.xlsx")
+def export_summarized_calls_excel_api(
+    role: str = Depends(get_current_role),
+    period: str | None = Query(default=None),
+    date_from: str | None = Query(default=None),
+    date_to: str | None = Query(default=None),
+    manager: str | None = Query(default=None),
+    topic: str | None = Query(default=None),
+    outcome: str | None = Query(default=None),
+):
+    has_911 = bool(allowed_call_types_for_role(role) & {"911"})
+    return _export_summarized_911_excel_response(
+        scope_911=has_911,
+        period=period,
+        date_from=date_from,
+        date_to=date_to,
+        manager=manager,
+        topic=topic,
+        outcome=outcome,
+    )
+
+
+@app.get("/summarized-calls/export.xlsx")
+def export_summarized_calls_excel_ui(
+    identity: UiIdentity = Depends(get_current_identity_ui),
+    period: str | None = Query(default=None),
+    date_from: str | None = Query(default=None),
+    date_to: str | None = Query(default=None),
+    manager: str | None = Query(default=None),
+    topic: str | None = Query(default=None),
+    outcome: str | None = Query(default=None),
+):
+    return _export_summarized_911_excel_response(
+        scope_911=identity_sees_911_summarization(identity),
+        period=period,
+        date_from=date_from,
+        date_to=date_to,
+        manager=manager,
+        topic=topic,
+        outcome=outcome,
     )
 
 

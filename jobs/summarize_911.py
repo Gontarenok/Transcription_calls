@@ -20,7 +20,7 @@ from model_paths import model_settings
 from summarization_llm import PROMPT_VERSION, get_text_generator, summarize_transcript_text
 
 
-PIPELINE_CODE = "911_SUMMARIZATION"
+PIPELINE_CODE = "911"
 
 
 def _get_active_transcription(call) -> Any | None:
@@ -36,20 +36,31 @@ def run_summarize_911_batch(
     limit: int = 100,
     call_started_at_gte: datetime | None = None,
     call_started_at_lt: datetime | None = None,
+    reuse_pipeline_run_id: int | None = None,
 ) -> dict:
-    """Синхронная саммаризация 911 в БД (используется Celery и run_911_pipeline)."""
+    """Синхронная саммаризация 911 в БД (используется Celery и run_911_pipeline).
+
+    Если задан ``reuse_pipeline_run_id``, шаг не создаёт и не завершает запись в ``pipeline_runs``
+    (итог фиксирует оркестратор ``run_911_pipeline``).
+    """
     start_ts = time.time()
     progress = {"processed": 0}
     skipped_no_transcription = 0
     skipped_empty_text = 0
 
-    pipeline_run = create_pipeline_run(
-        db,
-        started_at=datetime.now(timezone.utc),
-        status="RUNNING",
-        pipeline_code=PIPELINE_CODE,
-    )
-    register_active_pipeline(pipeline_run.id, lambda: int(progress["processed"]))
+    own_run = reuse_pipeline_run_id is None
+    if own_run:
+        pipeline_run = create_pipeline_run(
+            db,
+            started_at=datetime.now(timezone.utc),
+            status="RUNNING",
+            pipeline_code=PIPELINE_CODE,
+        )
+        run_id = pipeline_run.id
+    else:
+        run_id = int(reuse_pipeline_run_id)
+
+    register_active_pipeline(run_id, lambda: int(progress["processed"]))
     try:
         get_text_generator()
 
@@ -93,35 +104,37 @@ def run_summarize_911_batch(
             except Exception as exc:
                 set_call_status(db, call.id, "SUMMARIZATION_FAILED", error_message=str(exc))
 
-        finish_pipeline_run(
-            db,
-            pipeline_run_id=pipeline_run.id,
-            status="SUCCESS",
-            finished_at=datetime.now(timezone.utc),
-            processed_calls=int(progress["processed"]),
-            duration_seconds=int(time.time() - start_ts),
-            error_message=None,
-        )
+        if own_run:
+            finish_pipeline_run(
+                db,
+                pipeline_run_id=run_id,
+                status="SUCCESS",
+                finished_at=datetime.now(timezone.utc),
+                processed_calls=int(progress["processed"]),
+                duration_seconds=int(time.time() - start_ts),
+                error_message=None,
+            )
         return {
             "status": "ok",
-            "pipeline_run_id": pipeline_run.id,
+            "pipeline_run_id": run_id,
             "processed": progress["processed"],
             "skipped_no_transcription": skipped_no_transcription,
             "skipped_empty_text": skipped_empty_text,
         }
     except Exception as exc:
-        finish_pipeline_run(
-            db,
-            pipeline_run_id=pipeline_run.id,
-            status="FAILED",
-            finished_at=datetime.now(timezone.utc),
-            processed_calls=int(progress["processed"]),
-            duration_seconds=int(time.time() - start_ts),
-            error_message=str(exc),
-        )
+        if own_run:
+            finish_pipeline_run(
+                db,
+                pipeline_run_id=run_id,
+                status="FAILED",
+                finished_at=datetime.now(timezone.utc),
+                processed_calls=int(progress["processed"]),
+                duration_seconds=int(time.time() - start_ts),
+                error_message=str(exc),
+            )
         raise
     finally:
-        unregister_active_pipeline(pipeline_run.id)
+        unregister_active_pipeline(run_id)
 
 
 @shared_task(name="jobs.summarize_911_batch", bind=True, acks_late=True)

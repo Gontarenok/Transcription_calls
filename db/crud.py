@@ -5,7 +5,7 @@ from datetime import date, datetime
 from threading import Lock
 
 from sqlalchemy import func, select
-from sqlalchemy.orm import Session, load_only, selectinload
+from sqlalchemy.orm import Session, contains_eager, load_only, selectinload
 
 from .models import (
     Call,
@@ -843,9 +843,212 @@ def list_911_calls_summarized_in_range(
     return list(db.scalars(stmt))
 
 
+def _latest_summarization_subq():
+    return (
+        select(
+            Summarization.call_id.label("call_id"),
+            func.max(Summarization.id).label("summarization_id"),
+        )
+        .group_by(Summarization.call_id)
+        .subquery()
+    )
+
+
+def _summarized_911_calls_query(
+    *,
+    date_from: datetime | None = None,
+    date_to: datetime | None = None,
+    manager: str | None = None,
+    topic: str | None = None,
+    outcome: str | None = None,
+):
+    latest = _latest_summarization_subq()
+    stmt = (
+        select(Call)
+        .join(CallType, Call.call_type_id == CallType.id)
+        .join(User, Call.manager_id == User.id)
+        .join(latest, latest.c.call_id == Call.id)
+        .join(Summarization, Summarization.id == latest.c.summarization_id)
+        .where(CallType.code == "911")
+    )
+    if date_from:
+        stmt = stmt.where(Call.call_started_at >= date_from)
+    if date_to:
+        stmt = stmt.where(Call.call_started_at <= date_to)
+    if manager:
+        stmt = stmt.where(User.full_name == manager)
+    if topic:
+        stmt = stmt.where(Summarization.topic == topic)
+    if outcome:
+        stmt = stmt.where(Summarization.outcome == outcome)
+    return stmt
+
+
+def count_calls_with_latest_summarization_911(
+    db: Session,
+    *,
+    date_from: datetime | None = None,
+    date_to: datetime | None = None,
+    manager: str | None = None,
+    topic: str | None = None,
+    outcome: str | None = None,
+) -> int:
+    latest = _latest_summarization_subq()
+    stmt = (
+        select(func.count(func.distinct(Call.id)))
+        .select_from(Call)
+        .join(CallType, Call.call_type_id == CallType.id)
+        .join(User, Call.manager_id == User.id)
+        .join(latest, latest.c.call_id == Call.id)
+        .join(Summarization, Summarization.id == latest.c.summarization_id)
+        .where(CallType.code == "911")
+    )
+    if date_from:
+        stmt = stmt.where(Call.call_started_at >= date_from)
+    if date_to:
+        stmt = stmt.where(Call.call_started_at <= date_to)
+    if manager:
+        stmt = stmt.where(User.full_name == manager)
+    if topic:
+        stmt = stmt.where(Summarization.topic == topic)
+    if outcome:
+        stmt = stmt.where(Summarization.outcome == outcome)
+    return int(db.scalar(stmt) or 0)
+
+
+def list_calls_with_latest_summarization_911(
+    db: Session,
+    *,
+    limit: int = 200,
+    offset: int = 0,
+    date_from: datetime | None = None,
+    date_to: datetime | None = None,
+    manager: str | None = None,
+    topic: str | None = None,
+    outcome: str | None = None,
+    load_transcription_text: bool = False,
+) -> list[Call]:
+    stmt = _summarized_911_calls_query(
+        date_from=date_from,
+        date_to=date_to,
+        manager=manager,
+        topic=topic,
+        outcome=outcome,
+    )
+    trans_opt = selectinload(Call.transcriptions)
+    if not load_transcription_text:
+        trans_opt = trans_opt.load_only(
+            Transcription.id,
+            Transcription.call_id,
+            Transcription.is_active,
+            Transcription.model_name,
+        )
+    stmt = (
+        stmt.options(
+            contains_eager(Call.summarizations),
+            selectinload(Call.manager),
+            selectinload(Call.call_type),
+            selectinload(Call.call_status),
+            trans_opt,
+            selectinload(Call.call_parts),
+        )
+        .order_by(Call.call_started_at.desc())
+        .offset(max(0, offset))
+        .limit(limit)
+    )
+    return list(db.scalars(stmt).unique())
+
+
+def list_distinct_latest_summary_topics_911(db: Session) -> list[str]:
+    latest = _latest_summarization_subq()
+    stmt = (
+        select(Summarization.topic)
+        .join(latest, Summarization.id == latest.c.summarization_id)
+        .join(Call, Call.id == latest.c.call_id)
+        .join(CallType, Call.call_type_id == CallType.id)
+        .where(
+            CallType.code == "911",
+            Summarization.topic.is_not(None),
+            Summarization.topic != "",
+        )
+        .distinct()
+        .order_by(Summarization.topic.asc())
+    )
+    return [t for t in db.scalars(stmt) if t]
+
+
+def list_distinct_latest_summary_outcomes_911(db: Session) -> list[str]:
+    latest = _latest_summarization_subq()
+    stmt = (
+        select(Summarization.outcome)
+        .join(latest, Summarization.id == latest.c.summarization_id)
+        .join(Call, Call.id == latest.c.call_id)
+        .join(CallType, Call.call_type_id == CallType.id)
+        .where(
+            CallType.code == "911",
+            Summarization.outcome.is_not(None),
+            Summarization.outcome != "",
+        )
+        .distinct()
+        .order_by(Summarization.outcome.asc())
+    )
+    return [t for t in db.scalars(stmt) if t]
+
+
+def list_manager_names_for_summarized_911_filters(
+    db: Session,
+    *,
+    date_from: datetime | None = None,
+    date_to: datetime | None = None,
+    topic: str | None = None,
+    outcome: str | None = None,
+) -> list[str]:
+    latest = _latest_summarization_subq()
+    stmt = (
+        select(User.full_name)
+        .join(Call, Call.manager_id == User.id)
+        .join(CallType, Call.call_type_id == CallType.id)
+        .join(latest, latest.c.call_id == Call.id)
+        .join(Summarization, Summarization.id == latest.c.summarization_id)
+        .where(CallType.code == "911", User.full_name.is_not(None))
+    )
+    if date_from:
+        stmt = stmt.where(Call.call_started_at >= date_from)
+    if date_to:
+        stmt = stmt.where(Call.call_started_at <= date_to)
+    if topic:
+        stmt = stmt.where(Summarization.topic == topic)
+    if outcome:
+        stmt = stmt.where(Summarization.outcome == outcome)
+    stmt = stmt.distinct().order_by(User.full_name.asc())
+    return [m for m in db.scalars(stmt) if m]
+
+
 def create_pipeline_run(db: Session, *, started_at: datetime, status: str, pipeline_code: str) -> PipelineRun:
     run = PipelineRun(started_at=started_at, status=status, pipeline_code=pipeline_code, processed_calls=0)
     db.add(run)
+    db.commit()
+    db.refresh(run)
+    return run
+
+
+def update_pipeline_run_transcribe_stats(
+    db: Session,
+    *,
+    pipeline_run_id: int,
+    processed_calls: int,
+    total_audio_seconds: float | None = None,
+    avg_rtf: float | None = None,
+) -> PipelineRun | None:
+    """Обновить метрики транскрибации без завершения запуска (единый пайплайн 911)."""
+    run = db.get(PipelineRun, pipeline_run_id)
+    if not run or run.finished_at is not None:
+        return run
+    run.processed_calls = processed_calls
+    if total_audio_seconds is not None and hasattr(run, "total_audio_seconds"):
+        run.total_audio_seconds = total_audio_seconds
+    if avg_rtf is not None and hasattr(run, "avg_rtf"):
+        run.avg_rtf = avg_rtf
     db.commit()
     db.refresh(run)
     return run

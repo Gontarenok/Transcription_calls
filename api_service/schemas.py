@@ -20,6 +20,9 @@ class CallOut(BaseModel):
     subtopic: str | None = None
     classification_confidence: float | None = None
     classification_reason: str | None = None
+    summary_topic: str | None = None
+    summary_outcome: str | None = None
+    summary_short: str | None = None
 
 
 class CallsResponse(BaseModel):

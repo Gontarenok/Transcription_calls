@@ -1,0 +1,119 @@
+{% extends "base.html" %}
+
+{% block title %}Саммаризация{% endblock %}
+
+{% block content %}
+<div class="card">
+  <div class="page-head">
+    <h2>Саммаризация (911)</h2>
+  </div>
+
+  {% if date_error %}<div class="error">{{ date_error }}</div>{% endif %}
+
+    <form method="get" action="/summarized-calls">
+      <div class="filters cols-6">
+        <div class="field">
+          <label>Период</label>
+          <select name="period">
+            <option value="" {% if not filters.period %}selected{% endif %}>Не выбран</option>
+            <option value="today" {% if filters.period=='today' %}selected{% endif %}>Сегодня</option>
+            <option value="yesterday" {% if filters.period=='yesterday' %}selected{% endif %}>Вчера</option>
+            <option value="week_current" {% if filters.period=='week_current' %}selected{% endif %}>Текущая неделя</option>
+            <option value="week_prev" {% if filters.period=='week_prev' %}selected{% endif %}>Прошлая неделя</option>
+            <option value="month_current" {% if filters.period=='month_current' %}selected{% endif %}>Текущий месяц</option>
+            <option value="month_prev" {% if filters.period=='month_prev' %}selected{% endif %}>Прошлый месяц</option>
+          </select>
+        </div>
+        <div class="field"><label>Дата с</label><input type="date" name="date_from" value="{{ filters.date_from }}" /></div>
+        <div class="field"><label>Дата по</label><input type="date" name="date_to" value="{{ filters.date_to }}" /></div>
+        <div class="field">
+          <label>Менеджер</label>
+          <select name="manager">
+            <option value="">Все</option>
+            {% for m in managers %}
+              <option value="{{ m }}" {% if filters.manager == m %}selected{% endif %}>{{ m }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="field">
+          <label>Тема</label>
+          <select name="topic">
+            <option value="">Все</option>
+            {% for t in topic_options %}
+              <option value="{{ t }}" {% if filters.topic == t %}selected{% endif %}>{{ t }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="field">
+          <label>Итог</label>
+          <select name="outcome">
+            <option value="">Все</option>
+            {% for o in outcome_options %}
+              <option value="{{ o }}" {% if filters.outcome == o %}selected{% endif %}>{{ o }}</option>
+            {% endfor %}
+          </select>
+        </div>
+      </div>
+      <div class="filters-actions">
+        <button type="submit" class="btn-filter-submit">Применить фильтры</button>
+      </div>
+    </form>
+
+    {% if list_volume_notice %}
+    <div class="volume-notice">
+      По выбранным фильтрам найдено очень много записей (всего <strong>{{ pager.total }}</strong>, порог предупреждения {{ list_soft_cap }}).
+      Таблица открывается по {{ pager.page_size }} строк на страницу — при необходимости сузьте период или фильтры, либо воспользуйтесь выгрузкой в Excel.
+    </div>
+    {% endif %}
+
+    {% if pager is defined %}
+    <div class="pager-line">
+      {% if pager.prev_href %}<a href="{{ pager.prev_href }}">← Назад</a>{% endif %}
+      <span>{% if pager.total %}Звонки {{ pager.from_row }}–{{ pager.to_row }} из {{ pager.total }}{% else %}Нет записей по фильтру{% endif %}</span>
+      {% if pager.next_href %}<a href="{{ pager.next_href }}">Вперёд →</a>{% endif %}
+    </div>
+    <div class="pager-total">Всего: {{ pager.total }}</div>
+    {% endif %}
+
+    <div class="actions">
+      <div></div>
+      <a class="btn-secondary" href="/summarized-calls/export.xlsx?period={{ filters.period }}&date_from={{ filters.date_from }}&date_to={{ filters.date_to }}&manager={{ filters.manager }}&topic={{ filters.topic }}&outcome={{ filters.outcome }}">Выгрузить в Excel</a>
+    </div>
+
+    <div class="table-wrap">
+      <table class="sortable-table">
+        <thead>
+          <tr>
+            <th data-sort-type="num">ID</th>
+            <th data-sort-type="str">Octell ID</th>
+            <th data-sort-type="str">Менеджер</th>
+            <th data-sort-type="date">Дата</th>
+            <th data-sort-type="str">Тема</th>
+            <th data-sort-type="str">Итог</th>
+            <th data-sort-type="str">Кратко</th>
+            <th data-sort-type="num">Транскрибация</th>
+          </tr>
+        </thead>
+        <tbody>
+        {% for r in rows %}
+          <tr>
+            <td data-sort-value="{{ r.id }}">{{ r.id }}</td>
+            <td data-sort-value="{{ (r.octell_call_id or '')|e }}">{{ r.octell_call_id or '' }}</td>
+            <td data-sort-value="{{ (r.manager_full_name or '')|e }}">{{ r.manager_full_name or '' }}</td>
+            <td data-sort-value="{{ r.call_started_at.isoformat() if r.call_started_at else '' }}">{{ r.call_started_at }}</td>
+            <td data-sort-value="{{ (r.summary_topic or '')|e }}">{{ r.summary_topic or '' }}</td>
+            <td data-sort-value="{{ (r.summary_outcome or '')|e }}">{{ r.summary_outcome or '' }}</td>
+            <td data-sort-value="{{ (r.summary_short or '')|e }}">{{ r.summary_short or '' }}</td>
+            <td data-sort-value="{% if r.has_transcription %}1{% else %}0{% endif %}">
+              {% if r.has_transcription %}
+                <details class="lazy-transcript" data-fetch-url="/ui/calls/{{ r.id }}/active-transcription"><summary>Показать</summary><div class="transcript lazy-transcript-body"></div></details>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}

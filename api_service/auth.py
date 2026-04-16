@@ -86,6 +86,12 @@ def identity_sees_kc_classification(identity: UiIdentity) -> bool:
     return "КЦ" in identity.call_types
 
 
+def identity_sees_911_summarization(identity: UiIdentity) -> bool:
+    if identity.role == ROLE_ADMIN:
+        return True
+    return "911" in identity.call_types
+
+
 def _split_header_list(raw: str | None) -> list[str]:
     if not raw:
         return []
@@ -391,4 +397,5 @@ def menu_context(active: str, identity: UiIdentity) -> dict:
         "catalog_access": identity.catalog_access,
         "pipeline_admin": identity.pipeline_admin,
         "can_see_classification": identity_sees_kc_classification(identity),
+        "can_see_summarization": identity_sees_911_summarization(identity),
     }
