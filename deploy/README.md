@@ -157,37 +157,21 @@ docker compose ps
 EOF
 ```
 
-## 5. Nginx + HTTPS
+## 5. Авторизация, nginx + HTTPS
 
-Пример `/etc/nginx/sites-available/transcription-calls`:
+В проде авторизация идёт по схеме: **браузер → nginx → OAuth2-Proxy → Keycloak → приложение**.
+Приложение читает имя пользователя и роли из HTTP-заголовков в режиме `UI_AUTH_MODE=trusted_headers`.
 
-```nginx
-server {
-    listen 443 ssl http2;
-    server_name calls.example.com;
+Подробная пошаговая настройка Keycloak (клиент, realm roles, маппер), OAuth2-Proxy и nginx —
+в отдельном документе: **[deploy/KEYCLOAK.md](KEYCLOAK.md)**.
 
-    ssl_certificate     /etc/letsencrypt/live/calls.example.com/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/calls.example.com/privkey.pem;
-
-    # За этим location обычно стоит oauth2-proxy / authelia / kerberos-модуль,
-    # который устанавливает $auth_login и $auth_groups.
-    location / {
-        proxy_set_header Host              $host;
-        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_set_header X-Forwarded-Login  $auth_login;
-        proxy_set_header X-Forwarded-Groups $auth_groups;
-        proxy_pass http://127.0.0.1:5000;
-    }
-
-    location /flower/ { proxy_pass http://127.0.0.1:5555/; }
-}
-```
-
-```bash
-sudo ln -s /etc/nginx/sites-available/transcription-calls /etc/nginx/sites-enabled/
-sudo nginx -t && sudo systemctl reload nginx
-```
+Кратко:
+- `oauth2-proxy` работает как systemd-сервис на `127.0.0.1:4180`, проксирует на `127.0.0.1:5000`.
+- nginx терминирует TLS и через `auth_request /oauth2/auth` защищает все пути.
+- В `.env` на проде: `TRUSTED_HEADER_LOGIN=X-Auth-Request-Preferred-Username`,
+  `TRUSTED_HEADER_ROLES=X-Auth-Request-Groups`.
+- В Keycloak нужен **User Realm Role mapper** с Token Claim Name = `groups`,
+  иначе OAuth2-Proxy не получит роли.
 
 ## 6. Таймеры периодических пайплайнов
 
