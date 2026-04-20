@@ -28,9 +28,11 @@ class Settings:
     ui_auth_mode: str = (os.getenv("UI_AUTH_MODE", "trusted_headers") or "trusted_headers").strip().lower()
 
     # Доверенные заголовки (только за reverse-proxy, срез внешних X-Forwarded-* на границе)
-    trusted_header_login: str = os.getenv("TRUSTED_HEADER_LOGIN", "X-Forwarded-Login")
-    trusted_header_roles: str = os.getenv("TRUSTED_HEADER_ROLES", "X-Forwarded-Roles")
-    trusted_header_groups: str = os.getenv("TRUSTED_HEADER_GROUPS", "X-Forwarded-Groups")
+    # Дефолты соответствуют OAuth2-Proxy (set_xauthrequest=true). На dev/тесте
+    # можно переопределить на X-Forwarded-* или любые другие имена через .env.
+    trusted_header_login: str = os.getenv("TRUSTED_HEADER_LOGIN", "X-Auth-Request-Preferred-Username")
+    trusted_header_roles: str = os.getenv("TRUSTED_HEADER_ROLES", "X-Auth-Request-Roles")
+    trusted_header_groups: str = os.getenv("TRUSTED_HEADER_GROUPS", "X-Auth-Request-Groups")
     trusted_prefer_roles_header: bool = (
         os.getenv("TRUSTED_PREFER_ROLES_HEADER", "1").strip().lower() in {"1", "true", "yes", "on"}
     )

@@ -178,7 +178,10 @@ def identity_from_trusted_headers(request: Request) -> UiIdentity:
     raw_login = request.headers.get(login_key) or request.headers.get(login_key.title())
     username = (raw_login or "").strip()
     if not username:
-        raise HTTPException(status_code=401, detail="Нет учётных данных в заголовке (ожидается X-Forwarded-Login)")
+        raise HTTPException(
+            status_code=401,
+            detail=f"Нет учётных данных в заголовке (ожидается {settings.trusted_header_login})",
+        )
 
     roles_header = request.headers.get(settings.trusted_header_roles) or request.headers.get(
         settings.trusted_header_roles.title()
@@ -200,7 +203,10 @@ def identity_from_trusted_headers(request: Request) -> UiIdentity:
         flags = _roles_from_tokens(roles_tokens)
         g_for_display = roles_tokens
     else:
-        raise HTTPException(status_code=403, detail="Нет заголовка X-Forwarded-Roles / X-Forwarded-Groups")
+        raise HTTPException(
+            status_code=403,
+            detail=f"Нет заголовков {settings.trusted_header_roles} / {settings.trusted_header_groups}",
+        )
 
     return assemble_ui_identity(
         username=username,
@@ -374,7 +380,7 @@ def get_current_identity_ui(request: Request) -> UiIdentity:
             raise HTTPException(
                 status_code=401,
                 detail=(
-                    "Нет учётных данных от прокси (заголовок X-Forwarded-Login) и нет cookie-сессии после входа. "
+                    f"Нет учётных данных от прокси (заголовок {settings.trusted_header_login}) и нет cookie-сессии после входа. "
                     "Если входите суперпользователем по форме: при доступе по HTTP задайте SESSION_COOKIE_SECURE=0, "
                     "открывайте тот же host/port, убедитесь что прокси не удаляет cookie. "
                     "В проде без суперпользователя открывайте URL через портал, который подставляет заголовки."

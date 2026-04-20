@@ -2,18 +2,23 @@
 
 Сервис: сканирование аудио, транскрибация Whisper, PostgreSQL, фоновые задачи Celery (транскрибация, классификация, саммаризация, каталог), **FastAPI** + веб-интерфейс с разграничением по ролям.
 
-**Рекомендуемый вход в проде:** reverse-proxy (OAuth2 / OpenID Connect или AD) передаёт в приложение заголовки **`X-Forwarded-Login`**, **`X-Forwarded-Roles`** и/или **`X-Forwarded-Groups`** — без хранения каталога пользователей в приложении. Соответствие **группам AD** настраивается на стороне прокси; значения по умолчанию в коде совпадают с корпоративными группами:
+**Вход в проде:** браузер → nginx → **OAuth2-Proxy** (↔ **Keycloak** с LDAP-федерацией из AD) → приложение. Приложение работает в режиме **`UI_AUTH_MODE=trusted_headers`** и читает идентичность из HTTP-заголовков OAuth2-Proxy:
 
-| Группа AD (подстрока в заголовке) | Доступ |
+- **`X-Auth-Request-Preferred-Username`** — логин (`sAMAccountName` из AD).
+- **`X-Auth-Request-Groups`** — список AD-групп, членом которых является пользователь.
+
+Соответствие **AD-групп** и доступа в приложении (значения по умолчанию):
+
+| AD-группа (подстрока в заголовке) | Доступ |
 |-----------------------------------|--------|
 | `AG-AI calls-Administrators` | Администратор: оба типа звонков, пайплайны, API ADMIN |
 | `FG-AI calls CC-Users` | Звонки КЦ, классификация |
 | `FG-AI calls CC directory-Users` | КЦ + редактирование справочника тем |
 | `FG-AI calls 911-Users` | Звонки 911 |
 
-Имена ролей в **`X-Forwarded-Roles`** (если прокси отдаёт готовый список ролей вместо групп) задаются переменными `TRUSTED_ROLE_*` в `.env` (см. `.env.example`).
+Полная пошаговая настройка Keycloak (LDAP federation, Group Membership mapper), OAuth2-Proxy и nginx — в **[deploy/KEYCLOAK.md](deploy/KEYCLOAK.md)**.
 
-Опционально для локальной отладки: **`UI_AUTH_MODE=ldap`** — форма входа и LDAP (см. `.env.example`). В проде обычно **`UI_AUTH_MODE=trusted_headers`**.
+Опционально для локальной отладки: **`UI_AUTH_MODE=ldap`** — форма входа и LDAP напрямую (см. `.env.example`). В проде всегда **`UI_AUTH_MODE=trusted_headers`**.
 
 ---
 
@@ -102,8 +107,9 @@ docker compose up -d --build
 
 ### Веб-интерфейс
 
-- **`trusted_headers`:** логин и роли/группы с каждым запросом; приложение не синхронизирует каталог AD. Если **`UI_SUPERUSER_ENABLED=1`** и заданы **`UI_SUPERUSER_LOGIN`** / **`UI_SUPERUSER_PASSWORD`**, доступна форма входа суперпользователя без заголовков прокси (удобно для dev); у запросов с заголовком логина прокси по-прежнему приоритет.
-- **`ldap`:** форма входа; локальный суперпользователь только при **`UI_SUPERUSER_ENABLED=1`** и **`UI_SUPERUSER_*`** в `.env` (так отключается супер в проде при LDAP).
+- **`trusted_headers` (прод):** логин и группы с каждым запросом от **OAuth2-Proxy**; приложение не синхронизирует каталог AD. Имена заголовков задаются через `TRUSTED_HEADER_*` (по умолчанию — `X-Auth-Request-Preferred-Username` / `X-Auth-Request-Groups`). Сопоставление с правами — по подстрокам AD-групп в `TRUSTED_GROUP_*`. Подробная настройка: **[deploy/KEYCLOAK.md](deploy/KEYCLOAK.md)**.
+- **`ldap` (dev):** форма входа; приложение само ходит в LDAP/AD (`LDAP_*` в `.env`). Локальный суперпользователь только при **`UI_SUPERUSER_ENABLED=1`** и **`UI_SUPERUSER_*`** в `.env` (так отключается супер в проде).
+- В режиме `trusted_headers` при **`UI_SUPERUSER_ENABLED=1`** доступна форма входа суперпользователя без заголовков прокси (удобно для dev); запросы с заголовком логина прокси имеют приоритет.
 
 ---
 
@@ -134,13 +140,15 @@ docker compose up -d --build
 
 ---
 
-## 9. CI/CD (GitLab)
+## 9. CI/CD (GitLab) и деплой
 
 Файл `.gitlab-ci.yml`:
 
 - **test:** PostgreSQL service, `wait_for_postgres`, `init_db`, `verify_db_contract`.
-- **build:** сборка и push Docker-образа.
-- **deploy:** SSH и `docker compose pull && up` на прод.
+- **build:** сборка Docker-образа `registry/.../transcription-calls:$SHA` и push (на main — ещё и `:latest`).
+- **deploy_prod (только main):** SSH на прод, пишет `.image.env` с текущим тегом, `docker login` в registry, `docker compose pull`, миграции `create_all`, `up -d --remove-orphans`, prune.
+
+Прод-`docker-compose.yml` использует `image: ${IMAGE_NAME}:${IMAGE_TAG}`, а на dev автоматически подхватывается `docker-compose.override.yml` (сборка из исходников). Пошаговая инструкция для девопса: **[deploy/README.md](deploy/README.md)**.
 
 При необходимости переопределите **`DATABASE_URL`** в GitLab CI/CD Variables.
 

@@ -6,24 +6,30 @@
              ┌──────────────────────────────────────┐
              │             Prod Linux host          │
              │  ┌──────────────────────────────┐    │
-   HTTPS ──▶ │  │ nginx (SSO, X-Forwarded-*)   │    │
-             │  └──────────┬───────────────────┘    │
-             │             ▼                        │
-             │  ┌──────────────────────────────┐    │
-             │  │  docker compose              │    │
-             │  │  ├─ web  (FastAPI)           │    │
-             │  │  ├─ worker-transcribe        │    │
-             │  │  ├─ worker-light             │    │
-             │  │  ├─ flower                   │    │
-             │  │  └─ redis                    │    │
-             │  └──────────────────────────────┘    │
-             │                                      │
-             │  /srv/audio        (сеть NAS/SMB)    │
-             │  /srv/ai-models    (локально)        │
-             └──────────┬───────────────┬───────────┘
-                        │               │
-                        ▼               ▼
-                 PostgreSQL (внешний)  Qdrant (внешний)
+   HTTPS ──▶ │  │ nginx  (TLS, auth_request)   │    │
+             │  └────┬────────┬────────────────┘    │
+             │       │        │                     │
+             │       ▼        ▼ (X-Auth-Request-*)  │
+             │  ┌─────────┐   │                     │
+             │  │oauth2-  │   │                     │
+             │  │proxy    │   │                     │
+             │  └────┬────┘   │                     │
+             │       │        ▼                     │
+             │       │   ┌──────────────────────┐   │
+             │       │   │ docker compose       │   │
+             │       │   │ ├─ web (FastAPI)     │   │
+             │       │   │ ├─ worker-transcribe │   │
+             │       │   │ ├─ worker-light      │   │
+             │       │   │ ├─ flower            │   │
+             │       │   │ └─ redis             │   │
+             │       │   └──────────────────────┘   │
+             │       │                              │
+             │  /srv/audio       (сеть NAS/SMB)     │
+             │  /srv/ai-models   (локально)         │
+             └───────┼──────────┬───────────┬───────┘
+                     ▼          ▼           ▼
+                 Keycloak  PostgreSQL   Qdrant
+                 (+ AD)    (внешний)   (внешний)
 ```
 
 ## 0. Предусловия (вне приложения)
@@ -168,10 +174,12 @@ EOF
 Кратко:
 - `oauth2-proxy` работает как systemd-сервис на `127.0.0.1:4180`, проксирует на `127.0.0.1:5000`.
 - nginx терминирует TLS и через `auth_request /oauth2/auth` защищает все пути.
-- В `.env` на проде: `TRUSTED_HEADER_LOGIN=X-Auth-Request-Preferred-Username`,
-  `TRUSTED_HEADER_ROLES=X-Auth-Request-Groups`.
-- В Keycloak нужен **User Realm Role mapper** с Token Claim Name = `groups`,
-  иначе OAuth2-Proxy не получит роли.
+- В `.env` на проде (уже есть в `.env.example`): `TRUSTED_HEADER_LOGIN=X-Auth-Request-Preferred-Username`,
+  `TRUSTED_HEADER_GROUPS=X-Auth-Request-Groups`, `TRUSTED_PREFER_ROLES_HEADER=0`.
+- В Keycloak нужна LDAP federation с AD (с group-ldap-mapper, чтобы AD-группы
+  попали в Keycloak) и **Group Membership mapper** на клиенте с Token Claim Name = `groups`,
+  иначе OAuth2-Proxy не получит список групп. AD-группы при этом остаются с реальными
+  именами (`AG-AI calls-Administrators` и т.д.) и матчатся в приложении по `TRUSTED_GROUP_*`.
 
 ## 6. Таймеры периодических пайплайнов
 

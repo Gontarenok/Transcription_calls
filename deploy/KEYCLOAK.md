@@ -1,78 +1,119 @@
-# Авторизация: Keycloak + OAuth2-Proxy + nginx
+# Авторизация: AD → Keycloak → OAuth2-Proxy → приложение
 
-Схема:
+Схема прода:
+
 ```
 браузер ──HTTPS──▶ nginx ──auth_request──▶ oauth2-proxy ──OIDC──▶ Keycloak
-                     │                         │
+                     │                         │                      │
+                     │                         │                      ▼
+                     │                         │                 LDAP federation
+                     │                         │                      │
+                     │                         │                      ▼
+                     │                         │                  Active Directory
+                     │                         │                  (группы уже есть)
                      └─ X-Auth-Request-* ◀─────┘
                      │
                      ▼
-            FastAPI (app)
+                FastAPI (app)
 ```
 
-Приложение читает имя пользователя и роли из HTTP-заголовков, которые выставляет OAuth2-Proxy
-(режим `UI_AUTH_MODE=trusted_headers`). См. `api_service/auth.py`.
+Пользователи и группы живут в **AD** (корп. домен, OU `Transcription_calls`).
+Keycloak забирает их через LDAP federation. Приложение не ходит в AD/Keycloak —
+читает логин и список AD-групп из HTTP-заголовков, которые выставляет OAuth2-Proxy.
+
+## Используемые AD-группы
+
+Настраиваются в приложении через `TRUSTED_GROUP_*` (`.env`):
+
+| AD-группа | Роль в приложении |
+|---|---|
+| `AG-AI calls-Administrators` | ADMIN: оба типа звонков, пайплайны, API ADMIN |
+| `FG-AI calls CC-Users` | КЦ: звонки КЦ, классификация |
+| `FG-AI calls CC directory-Users` | КЦ + редактирование справочника тем |
+| `FG-AI calls 911-Users` | 911: звонки и саммаризация 911 |
 
 ## 1. Keycloak
 
-### 1.1 Realm roles
+### 1.1 LDAP federation с AD (если ещё не настроена)
 
-Создать realm roles, имена которых совпадают со значениями `TRUSTED_ROLE_*` в `.env`:
-
-- `admin`        → полный доступ (911 + КЦ + пайплайны + ADMIN API)
-- `kc_cc`        → только КЦ-звонки и классификация
-- `kc_catalog`   → КЦ + редактирование справочника тем
-- `911`          → только 911-звонки и саммаризация
-
-Если у вас в Keycloak другие имена (например `calls_admin`), пропишите их в `.env`:
-```
-TRUSTED_ROLE_ADMIN=calls_admin
-TRUSTED_ROLE_KC=calls_cc
-TRUSTED_ROLE_KC_CATALOG=calls_catalog
-TRUSTED_ROLE_911=calls_911
-```
-
-### 1.2 Client `transcription-calls`
-
-- Clients → Create:
-  - Client type: **OpenID Connect**
-  - Client ID: `transcription-calls`
-  - Client authentication: **On** (confidential)
-  - Authentication flow: **Standard flow** (authorization code)
-  - Valid redirect URIs: `https://calls.example.com/oauth2/callback`
-  - Web origins: `https://calls.example.com`
-- После создания → Credentials → скопировать **Client Secret** (пойдёт в OAuth2-Proxy).
-
-### 1.3 Маппер realm_access.roles → claim `groups`
-
-Stock oauth2-proxy по умолчанию берёт группы из claim `groups` и кладёт в
-`X-Auth-Request-Groups`. Нативно он **не извлекает `realm_access.roles`** — нужен маппер
-в Keycloak, который продублирует realm roles в claim с именем `groups`.
-
-Клиент `transcription-calls` → **Client scopes** → `transcription-calls-dedicated`
-(или любой shared scope) → **Add mapper → By configuration → User Realm Role**:
+Realm → **User federation → Add provider → ldap**:
 
 | Поле | Значение |
 |---|---|
-| Name | `realm-roles-as-groups` |
-| Multivalued | **On** |
+| Vendor | **Active Directory** |
+| Connection URL | `ldap://dc.corp.local:389` (или `ldaps://dc.corp.local:636`) |
+| Users DN | `OU=Users,DC=corp,DC=local` (ваш реальный OU) |
+| Bind DN | `CN=svc_keycloak,OU=Service,DC=corp,DC=local` |
+| Bind credential | пароль сервисной учётки (read-only достаточно) |
+| Edit mode | **READ_ONLY** |
+| Username LDAP attribute | `sAMAccountName` |
+| Import Users | **On** |
+| Sync Registrations | **Off** |
+
+Сохранить → **Synchronize all users**. Пользователи AD появятся в Users.
+
+### 1.2 Подтянуть группы AD в Keycloak
+
+В federation-провайдере → вкладка **Mappers → Add mapper**:
+
+| Поле | Значение |
+|---|---|
+| Name | `groups-from-ad` |
+| Mapper type | **group-ldap-mapper** |
+| LDAP Groups DN | `OU=Transcription_calls,OU=SecLevel 2,OU=_mpGroup,DC=corp,DC=local` (OU, где лежат 4 группы выше) |
+| Group Name LDAP Attribute | `cn` |
+| Group Object Classes | `group` |
+| Preserve Group Inheritance | **Off** (если иерархии групп нет) |
+| Membership LDAP Attribute | `member` |
+| Membership Attribute Type | **DN** |
+| User Groups Retrieve Strategy | **LOAD_GROUPS_BY_MEMBER_ATTRIBUTE** |
+| Mode | **READ_ONLY** |
+| Drop non-existing groups during sync | **On** |
+
+Сохранить → **Sync LDAP Groups to Keycloak**. В Keycloak → **Groups** появятся все 4 группы.
+
+### 1.3 Client `transcription-calls`
+
+Realm → **Clients → Create client**:
+
+- Client type: **OpenID Connect**
+- Client ID: `transcription-calls`
+- Client authentication: **On** (confidential)
+- Authentication flow: **Standard flow** (authorization code)
+
+После создания:
+- **Settings → Access settings**:
+  - Valid redirect URIs: `https://calls.example.com/oauth2/callback`
+  - Web origins: `https://calls.example.com`
+- **Credentials** → скопировать **Client Secret** (пригодится для OAuth2-Proxy).
+
+### 1.4 Маппер «группы в claim groups»
+
+Клиент `transcription-calls` → **Client scopes** → `transcription-calls-dedicated`
+→ **Add mapper → By configuration → Group Membership**:
+
+| Поле | Значение |
+|---|---|
+| Name | `groups-claim` |
 | Token Claim Name | `groups` |
-| Claim JSON Type | `String` |
+| **Full group path** | **Off** (важно! без этого придут `/AG-AI calls-Administrators`) |
 | Add to ID token | **On** |
 | Add to access token | **On** |
 | Add to userinfo | **On** |
 
-Проверить через UserInfo endpoint: токен должен содержать
+После этого ID/Access/Userinfo токен будет содержать:
 ```json
 {
   "preferred_username": "ivanov.ii",
-  "groups": ["admin", "kc_cc"]
+  "groups": ["AG-AI calls-Administrators", "FG-AI calls CC-Users"]
 }
 ```
 
-### 1.4 Назначить роли пользователям
+### 1.5 Права пользователей
 
-Users → выбрать пользователя → **Role mapping → Assign role** → realm roles.
+Пользователям уже назначены AD-группы — дополнительно в Keycloak ничего делать не нужно.
+Можно проверить в Keycloak: Users → выбрать пользователя → **Groups** → там должны
+быть `AG-AI calls-...`.
 
 ## 2. OAuth2-Proxy
 
@@ -90,7 +131,7 @@ client_id = "transcription-calls"
 client_secret = "<КЛИЕНТСКИЙ СЕКРЕТ ИЗ KEYCLOAK>"
 redirect_url = "https://calls.example.com/oauth2/callback"
 
-# Из какого claim брать группы (мы смапили туда realm_access.roles)
+# Из какого claim брать группы (мы смапили туда AD-группы)
 oidc_groups_claim = "groups"
 
 # Cookie
@@ -105,7 +146,7 @@ set_xauthrequest = true         # X-Auth-Request-User, -Email, -Preferred-Userna
 pass_user_headers = true
 pass_access_token = false
 
-# Авторизацию по ролям делает приложение; здесь пропускаем всех,
+# Авторизацию по группам делает приложение; здесь пропускаем всех,
 # кого аутентифицировал Keycloak
 email_domains = ["*"]
 
@@ -172,11 +213,12 @@ server {
     # 3. Защищённое приложение
     location / {
         auth_request /oauth2/auth;
-        # при 401 — на логин Keycloak через oauth2-proxy
         error_page 401 = /oauth2/sign_in;
 
-        # Пробрасываем X-Auth-Request-* (пробросятся сами через proxy_pass)
-        proxy_pass http://127.0.0.1:5000;
+        # oauth2-proxy сам проксирует на upstream (http://127.0.0.1:5000)
+        # и уже вложил X-Auth-Request-* в запрос.
+        proxy_pass http://127.0.0.1:4180;
+
         proxy_set_header Host              $host;
         proxy_set_header X-Real-IP         $remote_addr;
         proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
@@ -192,83 +234,64 @@ server {
 }
 ```
 
-> Примечание: заголовки `X-Auth-Request-*` oauth2-proxy выставляет в ответе на `/oauth2/auth`,
-> но чтобы они реально попали в апстрим приложения, нужно либо использовать oauth2-proxy как
-> **upstream** (режим reverse_proxy), либо явно скопировать их через `auth_request_set`
-> и `proxy_set_header`. В конфиге выше используется первый способ — проще.
+## 4. `.env` на проде (готовый блок)
 
-Если выбираете вариант «переименовать заголовки в nginx» (чтобы оставить дефолтные
-`X-Forwarded-Login` / `X-Forwarded-Roles` в `.env`), то location выше превращается в:
-
-```nginx
-location / {
-    auth_request /oauth2/auth;
-    error_page 401 = /oauth2/sign_in;
-
-    auth_request_set $auth_user   $upstream_http_x_auth_request_preferred_username;
-    auth_request_set $auth_groups $upstream_http_x_auth_request_groups;
-
-    proxy_set_header X-Forwarded-Login  $auth_user;
-    proxy_set_header X-Forwarded-Roles  $auth_groups;
-
-    proxy_pass http://127.0.0.1:5000;
-}
-```
-
-## 4. `.env` на проде
-
-Выбираем один из двух вариантов.
-
-### Вариант A — приложение читает X-Auth-Request-* напрямую (рекомендую)
 ```dotenv
 UI_AUTH_MODE=trusted_headers
 UI_SUPERUSER_ENABLED=0
 SESSION_COOKIE_SECURE=1
 
+# Заголовки от OAuth2-Proxy (без переименования в nginx)
 TRUSTED_HEADER_LOGIN=X-Auth-Request-Preferred-Username
-TRUSTED_HEADER_ROLES=X-Auth-Request-Groups
+TRUSTED_HEADER_ROLES=X-Auth-Request-Roles
 TRUSTED_HEADER_GROUPS=X-Auth-Request-Groups
-TRUSTED_PREFER_ROLES_HEADER=1
 
-TRUSTED_ROLE_ADMIN=admin
-TRUSTED_ROLE_KC=kc_cc
-TRUSTED_ROLE_KC_CATALOG=kc_catalog
-TRUSTED_ROLE_911=911
+# Keycloak отдаёт AD-группы в X-Auth-Request-Groups; используем сопоставление по группам
+TRUSTED_PREFER_ROLES_HEADER=0
+
+TRUSTED_GROUP_ADMIN=AG-AI calls-Administrators
+TRUSTED_GROUP_KC=FG-AI calls CC-Users
+TRUSTED_GROUP_KC_CATALOG=FG-AI calls CC directory-Users
+TRUSTED_GROUP_911=FG-AI calls 911-Users
 ```
 
-### Вариант B — имена переименовываются в nginx
-```dotenv
-UI_AUTH_MODE=trusted_headers
-UI_SUPERUSER_ENABLED=0
-SESSION_COOKIE_SECURE=1
+## 5. Проверка и диагностика
 
-TRUSTED_HEADER_LOGIN=X-Forwarded-Login
-TRUSTED_HEADER_ROLES=X-Forwarded-Roles
-TRUSTED_PREFER_ROLES_HEADER=1
-# TRUSTED_ROLE_* — как в варианте A
-```
+### 5.1 Токен Keycloak содержит нужный claim
 
-## 5. Диагностика
-
-**Проверить, что токен содержит нужный claim:**
 ```bash
 curl -H "Authorization: Bearer $ACCESS_TOKEN" \
   https://keycloak.example.com/realms/MY_REALM/protocol/openid-connect/userinfo | jq
-# должно быть: "groups": ["admin", ...]
+```
+Ожидаемый ответ:
+```json
+{
+  "preferred_username": "ivanov.ii",
+  "groups": ["AG-AI calls-Administrators", "FG-AI calls CC-Users"]
+}
 ```
 
-**Посмотреть, какие заголовки реально доходят до приложения:**
-Временно добавить в FastAPI endpoint:
+### 5.2 OAuth2-Proxy отдаёт заголовки в приложение
+
+Можно временно добавить в `api_service/main.py`:
 ```python
 @app.get("/debug/whoami")
 def whoami(request: Request):
-    return dict(request.headers)
+    return {k: v for k, v in request.headers.items() if k.lower().startswith("x-")}
 ```
-и зайти из браузера через nginx → oauth2-proxy — в ответе увидите все `X-Auth-Request-*`.
 
-**401 на всех страницах:** `TRUSTED_HEADER_LOGIN` указывает на заголовок, которого нет.
-Сверить с тем, что пришло в `/debug/whoami`.
+Через браузер (с авторизацией) открыть `/debug/whoami` — должны увидеть:
+```
+x-auth-request-preferred-username: ivanov.ii
+x-auth-request-groups: AG-AI calls-Administrators,FG-AI calls CC-Users
+x-auth-request-email: ivanov.ii@corp.local
+```
 
-**403 «Нет прав на доступ (группы/роли не сопоставлены)»:** `X-Auth-Request-Groups`
-пустой или в нём имена ролей, не совпадающие с `TRUSTED_ROLE_*`. Проверить маппер в Keycloak
-и значение `oidc_groups_claim` в oauth2-proxy.
+### 5.3 Типичные ошибки
+
+| Симптом | Причина | Решение |
+|---|---|---|
+| 401 на каждой странице, в редиректе Keycloak заходит, но обратно — 401 | В `/debug/whoami` нет `x-auth-request-preferred-username` | Проверить `set_xauthrequest = true` в oauth2-proxy.cfg |
+| «Нет заголовка X-Forwarded-Roles / X-Forwarded-Groups» | `TRUSTED_HEADER_GROUPS` указывает на несуществующий заголовок | В `.env` должно быть `TRUSTED_HEADER_GROUPS=X-Auth-Request-Groups` |
+| «Нет прав на доступ (группы/роли не сопоставлены)» | `x-auth-request-groups` приходит, но содержимое не матчится с `TRUSTED_GROUP_*` | Сверить имена AD-групп с .env; если идёт `/AG-AI ...` (с косой чертой) — в Group Membership mapper **Full group path** должен быть **Off** |
+| Токен Keycloak содержит `"groups": []` | В federation-маппере не синхронизированы LDAP-группы либо пользователю не вычисляются memberOf | В User federation → `groups-from-ad` → **Sync LDAP Groups**; проверить Users → Groups в UI Keycloak |
