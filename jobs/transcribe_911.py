@@ -31,7 +31,12 @@ def transcribe_911_run(
     recursive: bool = False,
     limit: int = 100000,
 ) -> dict:
-    root_dir = Path(root or os.getenv("N911_ROOT", r"C:\Audio_share\Night"))
+    root_dir = Path(
+        root
+        or os.getenv("N911_AUDIO_ROOT")
+        or os.getenv("N911_ROOT")
+        or r"C:\Audio_share\Night"
+    )
     lock_file = _lock_path()
 
     with portalocker.Lock(lock_file, timeout=0):

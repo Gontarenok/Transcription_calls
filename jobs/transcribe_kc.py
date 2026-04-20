@@ -74,7 +74,12 @@ def transcribe_kc_day(
     - enqueue parallel transcription per manager folder
     - finish pipeline_run when all manager tasks are done
     """
-    root_dir = Path(root or os.getenv("KC_ROOT", r"C:\Audio_share\Contact_center"))
+    root_dir = Path(
+        root
+        or os.getenv("KC_AUDIO_ROOT")
+        or os.getenv("KC_ROOT")
+        or r"C:\Audio_share\Contact_center"
+    )
     day_folder = normalize_day_folder(day or datetime.now().strftime("%d%m%Y"))
 
     lock_file = _lock_path(day_folder)

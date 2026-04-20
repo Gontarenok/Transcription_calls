@@ -39,7 +39,7 @@ from summarization_llm.report_week_range import period_to_utc_half_open, previou
 from summarization_llm.weekly_stats import aggregate_outcomes_for_calls, build_weekly_task_text
 from summarization_llm.work_client import upload_weekly_911_task
 
-N911_ROOT = r"C:\Audio_share\Night"
+N911_ROOT = os.getenv("N911_AUDIO_ROOT") or os.getenv("911_CALLS_ROOT") or r"C:\Audio_share\Night"
 N911_MODEL = "medium"
 N911_LIMIT = 10000
 N911_RECURSIVE = False

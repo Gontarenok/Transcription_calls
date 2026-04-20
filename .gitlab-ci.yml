@@ -6,16 +6,21 @@ stages:
 variables:
   PIP_DISABLE_PIP_VERSION_CHECK: "1"
   DOCKER_DRIVER: overlay2
+  # Теги: по SHA коммита (уникально, воспроизводимо) + latest на main.
   IMAGE_TAG: "$CI_COMMIT_SHA"
   IMAGE_NAME: "$CI_REGISTRY_IMAGE/transcription-calls"
-  # Тест `verify_db_contract` поднимает схему через ORM (`db/init_db.py`) в сервисном PostgreSQL.
-  # При необходимости переопределите в GitLab: Settings → CI/CD → Variables → DATABASE_URL (например внешний стенд).
+  # Тест `verify_db_contract` поднимает схему через ORM (db/init_db.py)
+  # в сервисном PostgreSQL. При необходимости переопределите через
+  # GitLab: Settings → CI/CD → Variables → DATABASE_URL.
   POSTGRES_DB: transcription_calls_ci
   POSTGRES_USER: ci
   POSTGRES_PASSWORD: ci
   POSTGRES_HOST_AUTH_METHOD: trust
   DATABASE_URL: "postgresql+psycopg2://ci:ci@postgres:5432/transcription_calls_ci"
 
+# ------------------------------------------------------------------------------
+# 1. Тесты: поднимаем временный Postgres, накатываем схему ORM, проверяем контракт.
+# ------------------------------------------------------------------------------
 test:
   stage: test
   image: python:3.11
@@ -30,6 +35,10 @@ test:
   only:
     - branches
 
+# ------------------------------------------------------------------------------
+# 2. Сборка: собираем образ на каждой ветке (кеш слоёв в registry),
+#    пушим SHA-тег всегда, latest — только на main.
+# ------------------------------------------------------------------------------
 build:
   stage: build
   image: docker:27
@@ -40,31 +49,68 @@ build:
   before_script:
     - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
   script:
-    - docker build -t "$IMAGE_NAME:$IMAGE_TAG" .
+    - docker pull "$IMAGE_NAME:latest" || true
+    - docker build --cache-from "$IMAGE_NAME:latest" -t "$IMAGE_NAME:$IMAGE_TAG" .
     - docker push "$IMAGE_NAME:$IMAGE_TAG"
-    - docker tag "$IMAGE_NAME:$IMAGE_TAG" "$IMAGE_NAME:latest"
-    - docker push "$IMAGE_NAME:latest"
+    - |
+      if [ "$CI_COMMIT_REF_NAME" = "main" ]; then
+        docker tag  "$IMAGE_NAME:$IMAGE_TAG" "$IMAGE_NAME:latest"
+        docker push "$IMAGE_NAME:latest"
+      fi
   only:
     - branches
 
+# ------------------------------------------------------------------------------
+# 3. Деплой на прод: по SSH пишем .image.env с IMAGE_NAME/IMAGE_TAG,
+#    логинимся в registry deploy-токеном, pull → миграции → up -d.
+#
+# GitLab CI/CD Variables (Settings → CI/CD → Variables), все Protected + Masked:
+#   SSH_PRIVATE_KEY      — приватный SSH-ключ доступа к проду
+#   SSH_KNOWN_HOSTS      — вывод `ssh-keyscan -H <prod-host>`
+#   DEPLOY_USER          — пользователь на прод-хосте (напр. `deploy`)
+#   DEPLOY_HOST          — IP/DNS прод-сервера
+#   DEPLOY_PATH          — каталог с docker-compose.yml (напр. /opt/transcription-calls)
+#   CI_DEPLOY_USER       — имя deploy-токена GitLab (Settings → Repository → Deploy tokens)
+#   CI_DEPLOY_PASSWORD   — значение deploy-токена (scope: read_registry)
+# ------------------------------------------------------------------------------
 deploy_prod:
   stage: deploy
   image: alpine:3.20
   before_script:
     - apk add --no-cache openssh-client
-    - mkdir -p ~/.ssh
-    - chmod 700 ~/.ssh
-    - echo "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
-    - chmod 600 ~/.ssh/known_hosts
+    - mkdir -p ~/.ssh && chmod 700 ~/.ssh
+    - echo "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts && chmod 600 ~/.ssh/known_hosts
     - eval "$(ssh-agent -s)"
     - echo "$SSH_PRIVATE_KEY" | tr -d '\r' | ssh-add -
   script:
-    - >
-      ssh "$DEPLOY_USER@$DEPLOY_HOST"
-      "cd '$DEPLOY_PATH' &&
-       export IMAGE_NAME='$IMAGE_NAME' IMAGE_TAG='$IMAGE_TAG' &&
-       docker compose pull &&
-       docker compose up -d --remove-orphans"
+    - |
+      ssh "$DEPLOY_USER@$DEPLOY_HOST" bash -s <<EOF
+        set -euo pipefail
+        cd "$DEPLOY_PATH"
+
+        # 1. Фиксируем тег образа для docker compose (читается ${IMAGE_NAME}/${IMAGE_TAG} в YAML).
+        cat > .image.env <<EOT
+      IMAGE_NAME=$IMAGE_NAME
+      IMAGE_TAG=$IMAGE_TAG
+      EOT
+
+        # 2. Логин в GitLab Container Registry deploy-токеном (read_registry).
+        echo "$CI_DEPLOY_PASSWORD" | docker login -u "$CI_DEPLOY_USER" --password-stdin "$CI_REGISTRY"
+
+        # 3. Забираем новый образ.
+        docker compose --env-file .env --env-file .image.env pull
+
+        # 4. Миграции. create_all идемпотентен (не пересоздаёт существующие таблицы).
+        #    Дополнительно накатываем *.sql миграции, если они есть.
+        docker compose --env-file .env --env-file .image.env run --rm web \
+          python -c "from db.init_db import create_all; create_all()"
+
+        # 5. Перезапуск сервисов (compose перезапустит только те, у которых поменялся образ).
+        docker compose --env-file .env --env-file .image.env up -d --remove-orphans
+
+        # 6. Чистим старые висящие образы.
+        docker image prune -f
+      EOF
   environment:
     name: production
   only:

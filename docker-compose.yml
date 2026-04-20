@@ -1,12 +1,60 @@
+# ==============================================================================
+# Прод docker-compose для Linux.
+#
+# Внешние сервисы (не поднимаются здесь):
+#   - PostgreSQL  -> подключение по DATABASE_URL (.env)
+#   - Qdrant      -> подключение по QDRANT_URL (.env)
+# Это сделано осознанно: приложение и очереди можно перенести на другую машину
+# или масштабировать без простоя БД. БД и Qdrant живут своей жизнью.
+#
+# Поднимаются здесь:
+#   - redis                (брокер и backend Celery, только внутренняя сеть)
+#   - web                  (FastAPI, слушает только 127.0.0.1 — наружу через nginx)
+#   - worker-transcribe    (очередь q.transcribe)
+#   - worker-light         (очереди q.classify, q.catalog, q.summarize)
+#   - flower               (мониторинг Celery, только 127.0.0.1)
+#
+# Образ приложения тянется из GitLab Container Registry:
+#   image: ${IMAGE_NAME}:${IMAGE_TAG}
+# IMAGE_NAME и IMAGE_TAG должны быть в окружении docker compose — их передаёт
+# CI/CD через .image.env или systemd-юнит. На деве автоматически подхватится
+# docker-compose.override.yml, который заменит image: на build: .
+#
+# Тома:
+#   /srv/audio       -> сетевая шара со звонками (read-only для приложения)
+#   /srv/ai-models   -> локально скачанные модели Whisper/Gemma/embeddings
+#   app-logs         -> логи приложения
+#   app-reports      -> сгенерированные отчёты 911
+#   redis-data       -> persistence Redis (не критично, но удобно)
+# ==============================================================================
+
+x-app-image: &app-image
+  image: "${IMAGE_NAME:?Set IMAGE_NAME in .image.env}:${IMAGE_TAG:-latest}"
+
+x-app-env: &app-env
+  env_file:
+    - .env
+  environment:
+    CELERY_BROKER_URL: "redis://:${REDIS_PASSWORD}@redis:6379/0"
+    CELERY_RESULT_BACKEND: "redis://:${REDIS_PASSWORD}@redis:6379/0"
+
+x-app-volumes: &app-volumes
+  - ${AUDIO_HOST_PATH:-/srv/audio}:/srv/audio:ro
+  - ${MODELS_HOST_PATH:-/srv/ai-models}:/srv/ai-models:ro
+  - app-logs:/app/logs
+  - app-reports:/app/reports_911
+
 services:
   redis:
     image: redis:7-alpine
     env_file:
       - .env
     environment:
-      REDIS_PASSWORD: ${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}
-    command: sh -c "exec redis-server --requirepass $$REDIS_PASSWORD"
-    # Порт наружу не публикуем — только внутренняя сеть Docker.
+      REDIS_PASSWORD: "${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}"
+    command: sh -c 'exec redis-server --requirepass "$$REDIS_PASSWORD" --appendonly no --save ""'
+    restart: unless-stopped
+    volumes:
+      - redis-data:/data
     healthcheck:
       test: ["CMD-SHELL", "redis-cli -a $$REDIS_PASSWORD ping | grep PONG"]
       interval: 5s
@@ -14,66 +62,71 @@ services:
       retries: 15
 
   web:
-    build: .
-    env_file:
-      - .env
+    <<: [*app-image, *app-env]
     ports:
-      - "5000:5000"
+      # На прод-сервере наружу отдаёт только nginx. Здесь bind на loopback.
+      - "127.0.0.1:5000:5000"
     depends_on:
       redis:
         condition: service_healthy
+    volumes: *app-volumes
+    restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/healthz').read()"]
       interval: 15s
       timeout: 8s
       retries: 10
       start_period: 90s
-    environment:
-      REDIS_PASSWORD: ${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}
-      CELERY_BROKER_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
-      CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD}@redis:6379/0
 
   worker-transcribe:
-    build: .
-    env_file:
-      - .env
+    <<: [*app-image, *app-env]
     depends_on:
       redis:
         condition: service_healthy
+    volumes: *app-volumes
     command: ["celery", "-A", "app.celery_app:celery_app", "worker", "-l", "INFO", "-Q", "q.transcribe", "--concurrency=1"]
-    environment:
-      REDIS_PASSWORD: ${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}
-      CELERY_BROKER_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
-      CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD}@redis:6379/0
+    restart: unless-stopped
+    # ----------------------------------------------------------------------
+    # GPU (NVIDIA). Раскомментировать на хосте с установленным
+    # nvidia-container-toolkit. Без GPU Whisper работает на CPU (медленнее).
+    # ----------------------------------------------------------------------
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
 
   worker-light:
-    build: .
-    env_file:
-      - .env
+    <<: [*app-image, *app-env]
     depends_on:
       redis:
         condition: service_healthy
+    volumes: *app-volumes
     command: ["celery", "-A", "app.celery_app:celery_app", "worker", "-l", "INFO", "-Q", "q.classify,q.catalog,q.summarize", "--concurrency=1"]
-    environment:
-      REDIS_PASSWORD: ${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}
-      CELERY_BROKER_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
-      CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD}@redis:6379/0
+    restart: unless-stopped
 
   flower:
     image: mher/flower:2.0
     env_file:
       - .env
     ports:
-      - "${FLOWER_PORT:-5555}:5555"
+      - "127.0.0.1:${FLOWER_PORT:-5555}:5555"
     depends_on:
       redis:
         condition: service_healthy
     environment:
-      REDIS_PASSWORD: ${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}
-      CELERY_BROKER_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
-      CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD}@redis:6379/0
-      FLOWER_BASIC_AUTH: ${FLOWER_BASIC_AUTH:?Set FLOWER_BASIC_AUTH in .env}
+      CELERY_BROKER_URL: "redis://:${REDIS_PASSWORD}@redis:6379/0"
+      CELERY_RESULT_BACKEND: "redis://:${REDIS_PASSWORD}@redis:6379/0"
+      FLOWER_BASIC_AUTH: "${FLOWER_BASIC_AUTH:?Set FLOWER_BASIC_AUTH in .env}"
     command:
       - sh
       - -c
       - exec celery flower --port=5555 --basic_auth="$$FLOWER_BASIC_AUTH"
+    restart: unless-stopped
+
+volumes:
+  redis-data:
+  app-logs:
+  app-reports:

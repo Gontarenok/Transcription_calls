@@ -10,7 +10,7 @@ from db.base import SessionLocal
 from db.models import PipelineRun
 
 # --- Конфиг запуска КЦ пайплайна (удобно для планировщика) ---
-KC_ROOT = r"C:\Audio_share\Contact_center"
+KC_ROOT = os.getenv("KC_AUDIO_ROOT") or os.getenv("KC_CALLS_ROOT") or r"C:\Audio_share\Contact_center"
 # KC_DAY = datetime.now().strftime("%d%m%Y")  # например: 24022026
 KC_DAY = "04032026"
 KC_MODE = "all"  # scan / transcribe / all

@@ -1,0 +1,47 @@
+# ==============================================================================
+# Dev-override: подхватывается автоматически при `docker compose up`
+# в каталоге с исходниками. На проде этого файла НЕ должно быть
+# (CI выкладывает на прод только docker-compose.yml).
+#
+# Что делает:
+#   - Собирает образ локально из Dockerfile вместо pull из registry
+#     (поэтому IMAGE_NAME/IMAGE_TAG на деве указывать не обязательно).
+#   - Открывает порт 5000 наружу (на dev-машине удобно ходить с хоста).
+#   - Открывает порт 5555 Flower наружу.
+#   - Убирает requirement на внешние сети — web/workers подключатся к Postgres
+#     по DATABASE_URL из .env (например postgres на хосте: host.docker.internal).
+#
+# На Windows-хосте внутри Hyper-V Linux-VM пути /srv/audio и /srv/ai-models
+# можно переопределить через .env:
+#   AUDIO_HOST_PATH=/mnt/audio_share
+#   MODELS_HOST_PATH=/home/dev/ai-models
+# ==============================================================================
+
+services:
+  web:
+    image: transcription-calls:dev
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      # На деве удобно заходить с хоста:  http://<vm-ip>:5000
+      - "5000:5000"
+    # На Windows/Linux-хосте с Postgres на хосте:
+    # extra_hosts:
+    #   - "host.docker.internal:host-gateway"
+
+  worker-transcribe:
+    image: transcription-calls:dev
+    build:
+      context: .
+      dockerfile: Dockerfile
+
+  worker-light:
+    image: transcription-calls:dev
+    build:
+      context: .
+      dockerfile: Dockerfile
+
+  flower:
+    ports:
+      - "5555:5555"
