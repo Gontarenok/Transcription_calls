@@ -32,8 +32,8 @@ def build_weekly_task_text(
     outcome_counts: dict[str, int],
 ) -> str:
     lines = [
-        f"Период отчёта: {period_start} — {period_end}",
-        f"Звонков 911 с саммари за период: {calls_summarized}",
+        f"📅 Еженедельный отчет по звонкам 911. Период: {period_start} — {period_end}.",
+        f"Обработано звонков: {calls_summarized}",
     ]
     for status in ("Помогли", "Не помогли", "В работе", "Не указано"):
         lines.append(f"{status}: {outcome_counts.get(status, 0)}")
