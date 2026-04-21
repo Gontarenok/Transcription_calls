@@ -13,6 +13,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -63,7 +64,12 @@ class Call(Base, TimestampMixin):
         Index("ix_calls_manager_started_at", "manager_id", "call_started_at"),
         Index("ix_calls_started_at", "call_started_at"),
         Index("ix_calls_status_id", "status_id"),
-        Index("ix_calls_call_type_status_started", "call_type_id", "status_id", "call_started_at"),
+        Index(
+            "ix_calls_call_type_status_started",
+            "call_type_id",
+            "status_id",
+            text("call_started_at DESC"),
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -179,6 +185,7 @@ class TopicCatalogEntry(Base, TimestampMixin):
 
     __table_args__ = (
         UniqueConstraint("topic_name", "subtopic_name", name="uq_topic_catalog_topic_subtopic"),
+        UniqueConstraint("qdrant_point_id", name="uq_topic_catalog_qdrant_point_id"),
         Index("ix_topic_catalog_is_active", "is_active"),
     )
 
@@ -192,7 +199,7 @@ class TopicCatalogEntry(Base, TimestampMixin):
     doc_text: Mapped[str] = mapped_column(Text, nullable=False)
     source_name: Mapped[str | None] = mapped_column(String(100), default="reference_topics.txt")
     source_hash: Mapped[str | None] = mapped_column(String(64))
-    qdrant_point_id: Mapped[str | None] = mapped_column(String(100), unique=True)
+    qdrant_point_id: Mapped[str | None] = mapped_column(String(100))
 
     classifications: Mapped[list["CallClassification"]] = relationship(back_populates="catalog_entry", lazy="selectin")
 
